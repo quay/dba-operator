@@ -1,0 +1,10 @@
+version: "2"
+domain: app-sre.redhat.com
+repo: github.com/app-sre/dba-operator
+resources:
+- group: dbaoperator
+  version: v1alpha1
+  kind: DatabaseMigration
+- group: dbaoperator
+  version: v1alpha1
+  kind: ManagedDatabase
