@@ -22,7 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	dbaoperatorv1alpha1 "github.com/app-sre/dba-operator/api/v1alpha1"
+	dba "github.com/app-sre/dba-operator/api/v1alpha1"
 )
 
 // DatabaseMigrationReconciler reconciles a DatabaseMigration object
@@ -36,15 +36,15 @@ type DatabaseMigrationReconciler struct {
 
 func (r *DatabaseMigrationReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	_ = context.Background()
-	_ = r.Log.WithValues("databasemigration", req.NamespacedName)
+	var logger = r.Log.WithValues("databasemigration", req.NamespacedName)
 
-	// your logic here
+	logger.Info("DatabaseMigration reconcile called")
 
 	return ctrl.Result{}, nil
 }
 
 func (r *DatabaseMigrationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&dbaoperatorv1alpha1.DatabaseMigration{}).
+		For(&dba.DatabaseMigration{}).
 		Complete(r)
 }

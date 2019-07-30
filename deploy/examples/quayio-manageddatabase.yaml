@@ -1,0 +1,12 @@
+apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
+kind: ManagedDatabase
+metadata:
+  name: quay-production
+spec:
+  connection:
+    engine: mysql
+    host: localhost
+    port: 3306
+    database: quay
+    credentialsSecret: quayiocreds
+  desiredSchemaVersion: v123

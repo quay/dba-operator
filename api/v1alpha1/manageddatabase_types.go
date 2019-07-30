@@ -24,8 +24,18 @@ import (
 
 // ManagedDatabaseSpec defines the desired state of ManagedDatabase
 type ManagedDatabaseSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	Connection           DatabaseConnectionInfo `json:"connection"`
+	DesiredSchemaVersion string                 `json:"desiredSchemaVersion"`
+}
+
+// DatabaseConnectionInfo defines engine specific connection parameters to establish
+// a connection to the database.
+type DatabaseConnectionInfo struct {
+	Engine            string `json:"engine,omitempty"`
+	Host              string `json:"host,omitempty"`
+	Port              uint16 `json:"port,omitempty"`
+	Database          string `json:"database,omitempty"`
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
 }
 
 // ManagedDatabaseStatus defines the observed state of ManagedDatabase
