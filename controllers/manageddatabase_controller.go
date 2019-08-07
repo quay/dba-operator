@@ -28,29 +28,53 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	dba "github.com/app-sre/dba-operator/api/v1alpha1"
+	"github.com/app-sre/dba-operator/internal/vergraph"
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/alembic"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
 )
 
 // ManagedDatabaseReconciler reconciles a ManagedDatabase object
-type ManagedDatabaseReconciler struct {
+type ManagedDatabaseController struct {
 	client.Client
-	Log logr.Logger
+	Log            logr.Logger
+	migrationGraph *vergraph.VersionGraph
 }
 
-// +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases/status,verbs=get;update;patch
+func NewManagedDatabaseController(c client.Client, l logr.Logger) *ManagedDatabaseController {
+	return &ManagedDatabaseController{
+		Client:         c,
+		Log:            l,
+		migrationGraph: vergraph.NewVersionGraph(),
+	}
+}
+
+type ManagedDatabaseReconciler struct {
+	controller *ManagedDatabaseController
+}
+
+type DatabasemMigrationReconciler struct {
+	controller *ManagedDatabaseController
+}
+
+// +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases;databasemigrations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases/status;databasemigrations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=secrets,verbs=get
 
 func (r *ManagedDatabaseReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	var ctx = context.Background()
-	var log = r.Log.WithValues("manageddatabase", req.NamespacedName)
+	return r.controller.ReconcileManagedDatabase(req)
+}
 
-	log.Info("Reconcile called")
+func (r *DatabasemMigrationReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+	return r.controller.ReconcileDatabaseMigration(req)
+}
+
+func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (ctrl.Result, error) {
+	var ctx = context.Background()
+	var log = c.Log.WithValues("manageddatabase", req.NamespacedName)
 
 	var db dba.ManagedDatabase
-	if err := r.Get(ctx, req.NamespacedName, &db); err != nil {
+	if err := c.Get(ctx, req.NamespacedName, &db); err != nil {
 		log.Error(err, "unable to fetch ManagedDatabase")
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
 		// requeue (we'll need to wait for a new notification), and we can get them
@@ -58,7 +82,7 @@ func (r *ManagedDatabaseReconciler) Reconcile(req ctrl.Request) (ctrl.Result, er
 		return ctrl.Result{}, ignoreNotFound(err)
 	}
 
-	admin, err := r.initializeAdminConnection(ctx, req.Namespace, db.Spec.Connection)
+	admin, err := c.initializeAdminConnection(ctx, req.Namespace, db.Spec.Connection)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
@@ -76,12 +100,32 @@ func (r *ManagedDatabaseReconciler) Reconcile(req ctrl.Request) (ctrl.Result, er
 	return ctrl.Result{}, nil
 }
 
-func (r *ManagedDatabaseReconciler) initializeAdminConnection(ctx context.Context, namespace string, conn dba.DatabaseConnectionInfo) (dbadmin.DbAdmin, error) {
+func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request) (ctrl.Result, error) {
+	var ctx = context.Background()
+	var log = c.Log.WithValues("databasemigration", req.NamespacedName)
+
+	var db dba.DatabaseMigration
+	if err := c.Get(ctx, req.NamespacedName, &db); err != nil {
+		log.Error(err, "unable to fetch DatabaseMigration")
+		// we'll ignore not-found errors, since they can't be fixed by an immediate
+		// requeue (we'll need to wait for a new notification), and we can get them
+		// on deleted requests.
+		return ctrl.Result{}, ignoreNotFound(err)
+	}
+
+	c.migrationGraph.Add(&db)
+
+	log.Info("Updated migration graph", "graphLen", c.migrationGraph.Len(), "missingSources", c.migrationGraph.Missing())
+
+	return ctrl.Result{}, nil
+}
+
+func (c *ManagedDatabaseController) initializeAdminConnection(ctx context.Context, namespace string, conn dba.DatabaseConnectionInfo) (dbadmin.DbAdmin, error) {
 
 	var secretName = types.NamespacedName{Namespace: namespace, Name: conn.CredentialsSecret}
 
 	var credsSecret corev1.Secret
-	if err := r.Get(ctx, secretName, &credsSecret); err != nil {
+	if err := c.Get(ctx, secretName, &credsSecret); err != nil {
 		log.Error(err, "unable to fetch credentials secret")
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
 		// requeue (we'll need to wait for a new notification), and we can get them
@@ -106,11 +150,20 @@ func (r *ManagedDatabaseReconciler) initializeAdminConnection(ctx context.Contex
 	return nil, fmt.Errorf("Unknown database engine: %s", conn.Engine)
 }
 
-func (r *ManagedDatabaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
+
+	var r = &ManagedDatabaseReconciler{c}
+	err := ctrl.NewControllerManagedBy(mgr).
 		For(&dba.ManagedDatabase{}).
 		Complete(r)
+	if err != nil {
+		return err
+	}
 
+	var mr = &DatabasemMigrationReconciler{c}
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&dba.DatabaseMigration{}).
+		Complete(mr)
 }
 func ignoreNotFound(err error) error {
 	if apierrs.IsNotFound(err) {

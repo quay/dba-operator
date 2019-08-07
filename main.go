@@ -61,17 +61,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.DatabaseMigrationReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("DatabaseMigration"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "DatabaseMigration")
-		os.Exit(1)
-	}
-	if err = (&controllers.ManagedDatabaseReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("ManagedDatabase"),
-	}).SetupWithManager(mgr); err != nil {
+	if err = (controllers.NewManagedDatabaseController(
+		mgr.GetClient(),
+		ctrl.Log.WithName("controllers").WithName("ManagedDatabase"),
+	)).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedDatabase")
 		os.Exit(1)
 	}
