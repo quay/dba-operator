@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	dba "github.com/app-sre/dba-operator/api/v1alpha1"
 	"github.com/app-sre/dba-operator/internal/vergraph"
@@ -60,14 +61,6 @@ type DatabasemMigrationReconciler struct {
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases;databasemigrations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases/status;databasemigrations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=secrets,verbs=get
-
-func (r *ManagedDatabaseReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	return r.controller.ReconcileManagedDatabase(req)
-}
-
-func (r *DatabasemMigrationReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	return r.controller.ReconcileDatabaseMigration(req)
-}
 
 func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (ctrl.Result, error) {
 	var ctx = context.Background()
@@ -151,20 +144,18 @@ func (c *ManagedDatabaseController) initializeAdminConnection(ctx context.Contex
 }
 
 func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
-
-	var r = &ManagedDatabaseReconciler{c}
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&dba.ManagedDatabase{}).
-		Complete(r)
+		Complete(reconcile.Func(c.ReconcileManagedDatabase))
 	if err != nil {
 		return err
 	}
 
-	var mr = &DatabasemMigrationReconciler{c}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&dba.DatabaseMigration{}).
-		Complete(mr)
+		Complete(reconcile.Func(c.ReconcileDatabaseMigration))
 }
+
 func ignoreNotFound(err error) error {
 	if apierrs.IsNotFound(err) {
 		return nil
