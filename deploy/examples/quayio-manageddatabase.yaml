@@ -9,4 +9,4 @@ spec:
     port: 3306
     database: quay
     credentialsSecret: quayiocreds
-  desiredSchemaVersion: v123
+  desiredSchemaVersion: v2

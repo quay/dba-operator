@@ -1,9 +1,9 @@
 apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
 kind: DatabaseMigration
 metadata:
-  name: v123
+  name: v1
 spec:
-  previous: v122
+  previous: null
   phases:
   - name: phase1-add-new-column
     migrationContainer: quay.io/quaymigrations/v123-1

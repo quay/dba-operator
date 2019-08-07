@@ -22,16 +22,19 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// DatabaseMigrationPhase defines the desired steps to run to transition to the next phase
+type DatabaseMigrationPhase struct {
+	Name string `json:"name,omitempty"`
+}
+
 // DatabaseMigrationSpec defines the desired state of DatabaseMigration
 type DatabaseMigrationSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	Previous string                   `json:"previous,omitempty"`
+	Phases   []DatabaseMigrationPhase `json:"phases,omitempty"`
 }
 
 // DatabaseMigrationStatus defines the observed state of DatabaseMigration
 type DatabaseMigrationStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
 }
 
 // +kubebuilder:object:root=true
