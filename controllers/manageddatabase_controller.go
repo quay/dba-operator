@@ -85,10 +85,21 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	version, err := admin.GetSchemaVersion()
 	if err != nil {
 		log.Error(err, "unable to retrieve database version")
-
 		return ctrl.Result{}, err
 	}
 	log.Info("Versions", "startVersion", version, "desiredVersion", db.Spec.DesiredSchemaVersion)
+
+	err = admin.WriteCredentials("testusername", "testpassword")
+	if err != nil {
+		log.Error(err, "unable to create new database user", "username", "testusername")
+		return ctrl.Result{}, err
+	}
+
+	err = admin.VerifyUnusedAndDeleteCredentials("testusername")
+	if err != nil {
+		log.Error(err, "unable to delete credentials", "username", "testusername")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
