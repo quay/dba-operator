@@ -2,7 +2,9 @@ package mysqladmin
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"math/rand"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -15,6 +17,19 @@ type MySQLDbAdmin struct {
 	metadata dbadmin.MigrationMetadata
 }
 
+type sqlValue struct {
+	value  *string
+	quoted bool
+}
+
+func quoted(needsToBeQuoted string) sqlValue {
+	return sqlValue{value: &needsToBeQuoted, quoted: true}
+}
+
+func noquote(cantBeQuoted string) sqlValue {
+	return sqlValue{value: &cantBeQuoted, quoted: false}
+}
+
 func CreateMySQLAdmin(username, password, hostname string, port uint16, database string, metadata dbadmin.MigrationMetadata) (dbadmin.DbAdmin, error) {
 	connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, hostname, port, database)
 	db, err := sql.Open("mysql", connectionString)
@@ -22,55 +37,58 @@ func CreateMySQLAdmin(username, password, hostname string, port uint16, database
 	return &MySQLDbAdmin{db, database, metadata}, err
 }
 
-func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
+func randIdentifier(randomBytes int) string {
+	identBytes := make([]byte, randomBytes)
+	rand.Read(identBytes)
 
+	// Here we prepend "var" to handle an edge case where some hex (e.g. 1e2)
+	// gets interpreted as scientific notation by MySQL
+	return "var" + hex.EncodeToString(identBytes)
+}
+
+// This method attempts to prevent sql injection on MySQL DBMS control commands
+// such as CREATE USER and GRANT which don't support variables in prepared statements.
+// The design of this operator shouldn't require preventing injection as these values
+// are developer supplied and not end-user supplied, but it may help prevent errors
+// and should be considered a best practice.
+func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) error {
 	tx, err := mdba.handle.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec("SET @username := ?", username)
+	finalArgs := make([]interface{}, 0, len(args))
+	for _, arg := range args {
+		newIdent := randIdentifier(16)
+
+		if arg.quoted {
+			finalArgs = append(finalArgs, fmt.Sprintf(`", QUOTE(@%s), "`, newIdent))
+		} else {
+			finalArgs = append(finalArgs, fmt.Sprintf(`", @%s, "`, newIdent))
+		}
+
+		_, err = tx.Exec(fmt.Sprintf("SET @%s := ?", newIdent), arg.value)
+		if err != nil {
+			return err
+		}
+	}
+
+	rawSQLStmt := fmt.Sprintf(format, finalArgs...)
+	stmtStringName := randIdentifier(16)
+	createStmt := fmt.Sprintf(`SET @%s := CONCAT("%s")`, stmtStringName, rawSQLStmt)
+	_, err = tx.Exec(createStmt)
 	if err != nil {
 		return err
 	}
 
-	_, err = tx.Exec("SET @password := ?", password)
+	stmtName := randIdentifier(16)
+	_, err = tx.Exec(fmt.Sprintf("PREPARE %s FROM @%s", stmtName, stmtStringName))
 	if err != nil {
 		return err
 	}
 
-	_, err = tx.Exec(`SET @createStmt := CONCAT("CREATE USER ", QUOTE(@username), "@'%' IDENTIFIED BY ", QUOTE(@password))`)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("PREPARE stmt FROM @createStmt")
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("EXECUTE stmt")
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("SET @dbname := ?", mdba.database)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(`SET @grantStmt := CONCAT("GRANT SELECT, INSERT, UPDATE, DELETE ON ", @dbname, ".* TO ", QUOTE(@username))`)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("PREPARE grantnow FROM @grantStmt")
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("EXECUTE grantnow")
+	_, err = tx.Exec(fmt.Sprintf("EXECUTE %s", stmtName))
 	if err != nil {
 		return err
 	}
@@ -78,8 +96,29 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 	return tx.Commit()
 }
 
+func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
+
+	err := mdba.indirectSubstitute(
+		"CREATE USER %s@'%%' IDENTIFIED BY %s",
+		quoted(username),
+		quoted(password),
+	)
+	if err != nil {
+		return err
+	}
+
+	return mdba.indirectSubstitute(
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON %s.* TO %s",
+		noquote(mdba.database),
+		quoted(username),
+	)
+}
+
 func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) error {
-	sessionCountRow := mdba.handle.QueryRow("SELECT COUNT(*) FROM information_schema.processlist WHERE user = ?", username)
+	sessionCountRow := mdba.handle.QueryRow(
+		"SELECT COUNT(*) FROM information_schema.processlist WHERE user = ?",
+		username,
+	)
 
 	var sessionCount int
 	err := sessionCountRow.Scan(&sessionCount)
@@ -91,33 +130,10 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 		return fmt.Errorf("Unable to remove user %s, %d active sessions remaining", username, sessionCount)
 	}
 
-	tx, err := mdba.handle.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec("SET @username := ?", username)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(`SET @dropUser := CONCAT("DROP USER ", QUOTE(@username))`)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("PREPARE dropnow FROM @dropUser")
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec("EXECUTE dropnow")
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return mdba.indirectSubstitute(
+		"DROP USER %s",
+		quoted(username),
+	)
 }
 
 func (mdba *MySQLDbAdmin) GetSchemaVersion() (version string, err error) {
