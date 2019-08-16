@@ -1,7 +1,8 @@
 # Migration Container Interface
 
 The migration container will push statistics and completion information to 
-a Prometheus push gateway available specified in the environment.
+a Prometheus push gateway available specified in the environment. The migration
+container should return `0` on success or non-zero on failure.
 
 ## Environment
 
@@ -14,6 +15,13 @@ The address of the prometheus push gateway, in the form of:
 
 A unique opaque string that is used by the operator to identify the specific
 migration being monitored.
+
+### CONNECTION_STRING
+
+A database connection string that contains the username, password, hostname, port,
+and logical database schema, e.g.:
+
+`<engine>://<username>:<password>@<hostname>:<port>/<dbname>`
 
 ## Prometheus Metrics
 
