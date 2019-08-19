@@ -1,6 +1,6 @@
 # Migration Container Interface
 
-The migration container will push statistics and completion information to 
+The migration container will push statistics and completion information to
 a Prometheus push gateway available specified in the environment. The migration
 container should return `0` on success or non-zero on failure.
 
