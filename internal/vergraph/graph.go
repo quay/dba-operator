@@ -5,8 +5,8 @@ import (
 )
 
 type VersionNode struct {
-	version *dba.DatabaseMigration
-	prev    *VersionNode
+	Version *dba.DatabaseMigration
+	Prev    *VersionNode
 }
 
 var NullNode = VersionNode{}
@@ -32,7 +32,7 @@ func (vg *VersionGraph) Find(versionName string) *VersionNode {
 func (vg *VersionGraph) Add(node *dba.DatabaseMigration) {
 	previous, ok := vg.names[node.Spec.Previous]
 
-	var wrapped = &VersionNode{version: node, prev: previous}
+	var wrapped = &VersionNode{Version: node, Prev: previous}
 	if !ok {
 		if len(node.Spec.Previous) > 0 {
 			missingArray, ok := vg.missingFrom[node.Spec.Previous]
@@ -41,7 +41,7 @@ func (vg *VersionGraph) Add(node *dba.DatabaseMigration) {
 			}
 			vg.missingFrom[node.Spec.Previous] = append(missingArray, wrapped)
 		} else {
-			wrapped.prev = &NullNode
+			wrapped.Prev = &NullNode
 		}
 	}
 
@@ -49,7 +49,7 @@ func (vg *VersionGraph) Add(node *dba.DatabaseMigration) {
 	foundMissing, ok := vg.missingFrom[node.Name]
 	if ok {
 		for _, oneMissing := range foundMissing {
-			oneMissing.prev = wrapped
+			oneMissing.Prev = wrapped
 		}
 		delete(vg.missingFrom, node.Name)
 	}

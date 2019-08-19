@@ -40,8 +40,8 @@ type DatabaseConnectionInfo struct {
 
 // ManagedDatabaseStatus defines the observed state of ManagedDatabase
 type ManagedDatabaseStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	CurrentVersion string   `json:"currentVersion,omitempty"`
+	Errors         []string `json:"errors,omitempty"`
 }
 
 // +kubebuilder:object:root=true

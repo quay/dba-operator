@@ -18,11 +18,15 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/common/log"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,11 +44,13 @@ type ManagedDatabaseController struct {
 	client.Client
 	Log            logr.Logger
 	migrationGraph *vergraph.VersionGraph
+	Scheme         *runtime.Scheme
 }
 
-func NewManagedDatabaseController(c client.Client, l logr.Logger) *ManagedDatabaseController {
+func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) *ManagedDatabaseController {
 	return &ManagedDatabaseController{
 		Client:         c,
+		Scheme:         scheme,
 		Log:            l,
 		migrationGraph: vergraph.NewVersionGraph(),
 	}
@@ -89,19 +95,88 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	}
 	log.Info("Versions", "startVersion", version, "desiredVersion", db.Spec.DesiredSchemaVersion)
 
-	err = admin.WriteCredentials("testusername", "testpassword")
-	if err != nil {
-		log.Error(err, "unable to create new database user", "username", "testusername")
-		return ctrl.Result{}, err
+	db.Status.CurrentVersion = version
+
+	needVersion := db.Spec.DesiredSchemaVersion
+	var migrationToRun *dba.DatabaseMigration
+
+	for needVersion != version {
+		// Let's run a migration
+		found := c.migrationGraph.Find(needVersion)
+		if found == nil {
+			notFound := fmt.Errorf("Unable to find required migration: %s", needVersion)
+			log.Error(notFound, "Missing migration", "missingVersion", needVersion)
+			db.Status.Errors = append(db.Status.Errors, notFound.Error())
+			return ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}, notFound
+		}
+
+		// Keep the list in forward order
+		migrationToRun = found.Version
+		needVersion = found.Version.Spec.Previous
 	}
 
-	err = admin.VerifyUnusedAndDeleteCredentials("testusername")
-	if err != nil {
-		log.Error(err, "unable to delete credentials", "username", "testusername")
-		return ctrl.Result{}, err
+	if migrationToRun != nil {
+		log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous, "newVersion", migrationToRun.Name)
+
+		job, err := c.constructJobForMigration(&db, migrationToRun)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		if err := c.Create(ctx, job); err != nil {
+			log.Error(err, "unable to create Job for migration", "job", job, "migration", migrationToRun)
+			return ctrl.Result{}, err
+		}
 	}
+
+	// err = admin.WriteCredentials("testusername", "testpassword")
+	// if err != nil {
+	// 	log.Error(err, "unable to create new database user", "username", "testusername")
+	// 	return ctrl.Result{}, err
+	// }
+
+	// err = admin.VerifyUnusedAndDeleteCredentials("testusername")
+	// if err != nil {
+	// 	log.Error(err, "unable to delete credentials", "username", "testusername")
+	// 	return ctrl.Result{}, err
+	// }
 
 	return ctrl.Result{}, nil
+}
+
+func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration) (*batchv1.Job, error) {
+	name := fmt.Sprintf("%s-%s", managedDatabase.Name, migration.Name)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      make(map[string]string),
+			Annotations: make(map[string]string),
+			Name:        name,
+			Namespace:   managedDatabase.Namespace,
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						migration.Spec.MigrationContainerSpec,
+					},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+	}
+	// for k, v := range cronJob.Spec.JobTemplate.Annotations {
+	// 	job.Annotations[k] = v
+	// }
+	// job.Annotations[scheduledTimeAnnotation] = scheduledTime.Format(time.RFC3339)
+	// for k, v := range cronJob.Spec.JobTemplate.Labels {
+	// 	job.Labels[k] = v
+	// }
+	if err := ctrl.SetControllerReference(managedDatabase, job, c.Scheme); err != nil {
+		return nil, err
+	}
+
+	return job, nil
 }
 
 func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request) (ctrl.Result, error) {
@@ -157,6 +232,7 @@ func (c *ManagedDatabaseController) initializeAdminConnection(ctx context.Contex
 func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&dba.ManagedDatabase{}).
+		Owns(&batchv1.Job{}).
 		Complete(reconcile.Func(c.ReconcileManagedDatabase))
 	if err != nil {
 		return err

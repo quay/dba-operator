@@ -63,6 +63,7 @@ func main() {
 
 	if err = (controllers.NewManagedDatabaseController(
 		mgr.GetClient(),
+		mgr.GetScheme(),
 		ctrl.Log.WithName("controllers").WithName("ManagedDatabase"),
 	)).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedDatabase")
