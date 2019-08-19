@@ -16,21 +16,24 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// DatabaseMigrationPhase defines the desired steps to run to transition to the next phase
-type DatabaseMigrationPhase struct {
+// DatabaseMigrationSchemaHint approximately describes what the migration is going to change
+type DatabaseMigrationSchemaHint struct {
 	Name string `json:"name,omitempty"`
 }
 
 // DatabaseMigrationSpec defines the desired state of DatabaseMigration
 type DatabaseMigrationSpec struct {
-	Previous string                   `json:"previous,omitempty"`
-	Phases   []DatabaseMigrationPhase `json:"phases,omitempty"`
+	Previous               string                        `json:"previous,omitempty"`
+	MigrationContainerSpec corev1.Container              `json:"migrationContainerSpec,omitempty"`
+	Scalable               bool                          `json:"scalable,omitempty"`
+	SchemaHints            []DatabaseMigrationSchemaHint `json:"schemaHints"`
 }
 
 // DatabaseMigrationStatus defines the observed state of DatabaseMigration

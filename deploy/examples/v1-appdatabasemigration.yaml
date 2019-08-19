@@ -1,32 +1,20 @@
 apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
 kind: DatabaseMigration
 metadata:
-  name: v1
+  name: v1-phase1-add-new-column
 spec:
   previous: null
-  phases:
-  - name: phase1-add-new-column
-    migrationContainer: quay.io/quaymigrations/v123-1
-    schemaHints:
-    - operation: addColumn
-      table: image
-      type: int
-    - operation: addIndex
-      table: image
-      column: storage
-      unique: false
-      foreignKey: true
-      nullable: true
-  - name: phase2-backfill
-    migrationContainer: quay.io/quaymigrations/backfill-refs
-    scalable: true
-  - name: phase3-stop-writing-old
-  - name: phase4-remove-old
-    migrationContainer: quay.io/quaymigrations/v123-4
-    schemaHints:
-    - operation: dropIndex
-      table: image
-      column: oldStorage
-    - operation: dropColumn
-      table: image
-      column: oldstorage
+  migrationContainerSpec:
+    name: v1-phase1-add-new-column
+    image: quay.io/quaymigrations/v1
+    command: ["alembic", "migrate", "v1"]
+  schemaHints:
+  - operation: addColumn
+    table: image
+    type: int
+  - operation: addIndex
+    table: image
+    column: storage
+    unique: false
+    foreignKey: true
+    nullable: true
