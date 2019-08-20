@@ -158,7 +158,7 @@ func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *db
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
-						migration.Spec.MigrationContainerSpec,
+						containerSpec,
 					},
 					RestartPolicy: corev1.RestartPolicyNever,
 				},
@@ -201,7 +201,7 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 
 func (c *ManagedDatabaseController) initializeAdminConnection(ctx context.Context, namespace string, conn dba.DatabaseConnectionInfo) (dbadmin.DbAdmin, error) {
 
-	var secretName = types.NamespacedName{Namespace: namespace, Name: conn.CredentialsSecret}
+	var secretName = types.NamespacedName{Namespace: namespace, Name: conn.DSNSecret}
 
 	var credsSecret corev1.Secret
 	if err := c.Get(ctx, secretName, &credsSecret); err != nil {
@@ -212,19 +212,11 @@ func (c *ManagedDatabaseController) initializeAdminConnection(ctx context.Contex
 		return nil, err
 	}
 
-	username := string(credsSecret.Data["username"])
-	password := string(credsSecret.Data["password"])
+	dsn := string(credsSecret.Data["dsn"])
 
 	switch conn.Engine {
 	case "mysql":
-		return mysqladmin.CreateMySQLAdmin(
-			username,
-			password,
-			conn.Host,
-			conn.Port,
-			conn.Database,
-			alembic.CreateAlembicMigrationMetadata(),
-		)
+		return mysqladmin.CreateMySQLAdmin(dsn, alembic.CreateAlembicMigrationMetadata())
 	}
 	return nil, fmt.Errorf("Unknown database engine: %s", conn.Engine)
 }

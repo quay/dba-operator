@@ -3,6 +3,7 @@ package mysqladmin
 import (
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 
@@ -30,11 +31,24 @@ func noquote(cantBeQuoted string) sqlValue {
 	return sqlValue{value: &cantBeQuoted, quoted: false}
 }
 
-func CreateMySQLAdmin(username, password, hostname string, port uint16, database string, metadata dbadmin.MigrationMetadata) (dbadmin.DbAdmin, error) {
-	connectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, hostname, port, database)
-	db, err := sql.Open("mysql", connectionString)
+func CreateMySQLAdmin(dsn string, metadata dbadmin.MigrationMetadata) (dbadmin.DbAdmin, error) {
+	parsed, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.User == "" || parsed.Passwd == "" {
+		return nil, errors.New("Must provide username and password in the connection DSN")
+	}
+	if parsed.DBName == "" {
+		return nil, errors.New("Must provide specific database name in the connection DSN")
+	}
 
-	return &MySQLDbAdmin{db, database, metadata}, err
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	return &MySQLDbAdmin{db, parsed.DBName, metadata}, err
 }
 
 func randIdentifier(randomBytes int) string {

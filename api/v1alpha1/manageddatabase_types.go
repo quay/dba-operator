@@ -24,18 +24,15 @@ import (
 
 // ManagedDatabaseSpec defines the desired state of ManagedDatabase
 type ManagedDatabaseSpec struct {
-	Connection           DatabaseConnectionInfo `json:"connection"`
-	DesiredSchemaVersion string                 `json:"desiredSchemaVersion"`
+	DesiredSchemaVersion string                 `json:"desiredSchemaVersion,omitempty"`
+	Connection           DatabaseConnectionInfo `json:"connection,omitempty"`
 }
 
 // DatabaseConnectionInfo defines engine specific connection parameters to establish
 // a connection to the database.
 type DatabaseConnectionInfo struct {
-	Engine            string `json:"engine,omitempty"`
-	Host              string `json:"host,omitempty"`
-	Port              uint16 `json:"port,omitempty"`
-	Database          string `json:"database,omitempty"`
-	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+	Engine    string `json:"engine,omitempty"`
+	DSNSecret string `json:"dsnSecret,omitempty"`
 }
 
 // ManagedDatabaseStatus defines the observed state of ManagedDatabase

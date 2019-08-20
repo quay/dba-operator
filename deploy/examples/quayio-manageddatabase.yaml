@@ -5,8 +5,5 @@ metadata:
 spec:
   connection:
     engine: mysql
-    host: localhost
-    port: 3306
-    database: quay
-    credentialsSecret: quayiocreds
+    dsnSecret: quayiocreds
   desiredSchemaVersion: v2-phase2-backfill
