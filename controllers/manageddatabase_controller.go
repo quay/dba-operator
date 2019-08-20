@@ -118,7 +118,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	if migrationToRun != nil {
 		log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous, "newVersion", migrationToRun.Name)
 
-		job, err := c.constructJobForMigration(&db, migrationToRun)
+		job, err := c.constructJobForMigration(&db, migrationToRun, db.Spec.Connection.DSNSecret)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -144,8 +144,23 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration) (*batchv1.Job, error) {
+func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration, secretName string) (*batchv1.Job, error) {
 	name := fmt.Sprintf("%s-%s", managedDatabase.Name, migration.Name)
+
+	var containerSpec corev1.Container
+	migration.Spec.MigrationContainerSpec.DeepCopyInto(&containerSpec)
+
+	falseBool := false
+	csSource := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+		Key:                  "dsn",
+		Optional:             &falseBool,
+	}}
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "CONNECTION_STRING", ValueFrom: csSource})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "MIGRATION_ID", Value: name})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "PROMETHEUS_PUSH_GATEWAY_ADDR", Value: "prom-pushgateway:9091"})
+
+	containerSpec.ImagePullPolicy = "IfNotPresent"
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
