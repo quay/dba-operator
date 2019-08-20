@@ -6,17 +6,17 @@ container should return `0` on success or non-zero on failure.
 
 ## Environment
 
-### PROMETHEUS_PUSH_GATEWAY_ADDR
+### DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR
 
 The address of the prometheus push gateway, in the form of:
 `localhost:9091`
 
-### MIGRATION_ID
+### DBA_OP_MIGRATION_ID
 
 A unique opaque string that is used by the operator to identify the specific
 migration being monitored.
 
-### CONNECTION_STRING
+### DBA_OP_CONNECTION_STRING
 
 A database connection string that contains the username, password, hostname, port,
 and logical database schema, e.g.:

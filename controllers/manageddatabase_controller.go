@@ -171,9 +171,9 @@ func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *db
 		Key:                  "dsn",
 		Optional:             &falseBool,
 	}}
-	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "CONNECTION_STRING", ValueFrom: csSource})
-	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "MIGRATION_ID", Value: name})
-	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "PROMETHEUS_PUSH_GATEWAY_ADDR", Value: "prom-pushgateway:9091"})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_CONNECTION_STRING", ValueFrom: csSource})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_MIGRATION_ID", Value: name})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR", Value: "prom-pushgateway:9091"})
 
 	containerSpec.ImagePullPolicy = "IfNotPresent" // TODO removeme before prod
 

@@ -59,17 +59,17 @@ def run(db_connection_string, push_gateway_addr, job_id, run_seconds,
 if __name__ == '__main__':
     logging.basicConfig(format=FORMAT, level=logging.DEBUG)
 
-    if not 'PROMETHEUS_PUSH_GATEWAY_ADDR' in os.environ:
-        logger.error('Must provide the environment variable PROMETHEUS_PUSH_GATEWAY_ADDR')
+    if not 'DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR' in os.environ:
+        logger.error('Must provide the environment variable DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR')
         sys.exit(1)
-    if not 'MIGRATION_ID' in os.environ:
-        logger.error('Must provide the environment variable MIGRATION_ID')
+    if not 'DBA_OP_MIGRATION_ID' in os.environ:
+        logger.error('Must provide the environment variable DBA_OP_MIGRATION_ID')
         sys.exit(1)
-    if not 'CONNECTION_STRING' in os.environ:
-        logger.error('Must provide the environment variable CONNECTION_STRING')
+    if not 'DBA_OP_CONNECTION_STRING' in os.environ:
+        logger.error('Must provide the environment variable DBA_OP_CONNECTION_STRING')
         sys.exit(1)
     
-    logger = logging.getLogger(os.environ['MIGRATION_ID'])
+    logger = logging.getLogger(os.environ['DBA_OP_MIGRATION_ID'])
 
     parser = argparse.ArgumentParser(
         description='Run a fake migration container.',
@@ -89,9 +89,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     run(
-        os.environ['CONNECTION_STRING'],
-        os.environ['PROMETHEUS_PUSH_GATEWAY_ADDR'],
-        os.environ['MIGRATION_ID'],
+        os.environ['DBA_OP_CONNECTION_STRING'],
+        os.environ['DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR'],
+        os.environ['DBA_OP_MIGRATION_ID'],
         args.seconds,
         args.fail_after,
     )
