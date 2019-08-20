@@ -110,22 +110,37 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 			return ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}, notFound
 		}
 
-		// Keep the list in forward order
 		migrationToRun = found.Version
 		needVersion = found.Version.Spec.Previous
 	}
 
 	if migrationToRun != nil {
-		log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous, "newVersion", migrationToRun.Name)
+		// Check if this migration is already running
+		labelSelector := make(map[string]string)
+		labelSelector["migration-uid"] = string(migrationToRun.UID)
+		labelSelector["database-uid"] = string(db.UID)
 
-		job, err := c.constructJobForMigration(&db, migrationToRun, db.Spec.Connection.DSNSecret)
-		if err != nil {
+		var childJobs batchv1.JobList
+		if err := c.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingLabels(labelSelector)); err != nil {
+			log.Error(err, "unable to list migration Jobs")
 			return ctrl.Result{}, err
 		}
 
-		if err := c.Create(ctx, job); err != nil {
-			log.Error(err, "unable to create Job for migration", "job", job, "migration", migrationToRun)
-			return ctrl.Result{}, err
+		if len(childJobs.Items) == 0 {
+			// Start the migration
+			log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous, "newVersion", migrationToRun.Name)
+
+			job, err := c.constructJobForMigration(&db, migrationToRun, db.Spec.Connection.DSNSecret)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			if err := c.Create(ctx, job); err != nil {
+				log.Error(err, "unable to create Job for migration", "job", job, "migration", migrationToRun)
+				return ctrl.Result{}, err
+			}
+		} else {
+			log.Info("Found matching migration", "migration", migrationToRun.Name, "database", db.Name)
 		}
 	}
 
@@ -160,11 +175,16 @@ func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *db
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "MIGRATION_ID", Value: name})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "PROMETHEUS_PUSH_GATEWAY_ADDR", Value: "prom-pushgateway:9091"})
 
-	containerSpec.ImagePullPolicy = "IfNotPresent"
+	containerSpec.ImagePullPolicy = "IfNotPresent" // TODO removeme before prod
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels:      make(map[string]string),
+			Labels: map[string]string{
+				"migration":     string(migration.Name),
+				"migration-uid": string(migration.UID),
+				"database":      string(managedDatabase.Name),
+				"database-uid":  string(managedDatabase.UID),
+			},
 			Annotations: make(map[string]string),
 			Name:        name,
 			Namespace:   managedDatabase.Namespace,
@@ -180,13 +200,9 @@ func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *db
 			},
 		},
 	}
-	// for k, v := range cronJob.Spec.JobTemplate.Annotations {
-	// 	job.Annotations[k] = v
-	// }
-	// job.Annotations[scheduledTimeAnnotation] = scheduledTime.Format(time.RFC3339)
-	// for k, v := range cronJob.Spec.JobTemplate.Labels {
-	// 	job.Labels[k] = v
-	// }
+
+	// TODO figure out a policy for adding annotations and labels
+
 	if err := ctrl.SetControllerReference(managedDatabase, job, c.Scheme); err != nil {
 		return nil, err
 	}
