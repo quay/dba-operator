@@ -59,15 +59,15 @@ def run(db_connection_string, push_gateway_addr, job_id, run_seconds,
 if __name__ == '__main__':
     logging.basicConfig(format=FORMAT, level=logging.DEBUG)
 
-    if not 'DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR' in os.environ:
-        logger.error('Must provide the environment variable DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR')
-        sys.exit(1)
-    if not 'DBA_OP_MIGRATION_ID' in os.environ:
-        logger.error('Must provide the environment variable DBA_OP_MIGRATION_ID')
-        sys.exit(1)
-    if not 'DBA_OP_CONNECTION_STRING' in os.environ:
-        logger.error('Must provide the environment variable DBA_OP_CONNECTION_STRING')
-        sys.exit(1)
+    check_vars = [
+        'DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR',
+        'DBA_OP_MIGRATION_ID',
+        'DBA_OP_CONNECTION_STRING',
+    ]
+    for env_var_name in check_vars:
+        if not env_var_name in os.environ:
+            logger.error('Must provide the environment variable %s', env_var_name)
+            sys.exit(1)
     
     logger = logging.getLogger(os.environ['DBA_OP_MIGRATION_ID'])
 
