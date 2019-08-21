@@ -143,9 +143,10 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 				}
 
 				if currentVersion.Version.Spec.Previous != "" {
-					prevUsername := migrationUsername(currentVersion.Version.Spec.Previous)
+					prevUsername := migrationDBUsername(currentVersion.Version.Spec.Previous)
 					log.Info("Deprovisioning user account", "username", prevUsername)
 
+					// TODO: can we find out from k8s if the secret is still being used
 					// Delete the secret that the application may be using
 					prevSecretName := migrationName(db.Name, currentVersion.Version.Spec.Previous)
 					if err := deleteSecret(ctx, c.Client, req.Namespace, prevSecretName); err != nil {
@@ -164,7 +165,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 			}
 
 			// Provision the user account
-			newUsername := migrationUsername(migrationToRun.Name)
+			newUsername := migrationDBUsername(migrationToRun.Name)
 			newPassword, err := randPassword()
 			if err != nil {
 				return ctrl.Result{}, err
@@ -319,7 +320,7 @@ func migrationName(dbName, migrationName string) string {
 	return fmt.Sprintf("%s-%s", dbName, migrationName)
 }
 
-func migrationUsername(migrationName string) string {
+func migrationDBUsername(migrationName string) string {
 	return fmt.Sprintf("dba_%s", migrationName)
 }
 
