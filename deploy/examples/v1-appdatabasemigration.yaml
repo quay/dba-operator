@@ -1,13 +1,13 @@
 apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
 kind: DatabaseMigration
 metadata:
-  name: v1-phase1-add-new-column
+  name: v1
 spec:
   previous: null
   migrationContainerSpec:
     name: v1-phase1-add-new-column
-    image: quay.io/quaymigrations/v1
-    command: ["alembic", "migrate", "v1"]
+    image: quay.io/quaymigrations/test
+    command: ["python", "migration.py", "--write_version", "v1"]
   schemaHints:
   - operation: addColumn
     table: image
