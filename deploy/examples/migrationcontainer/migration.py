@@ -3,16 +3,26 @@ import sys
 import logging
 import time
 import argparse
+import re
+
+import pymysql.cursors
+import pymysql.err
 
 from prometheus_client import CollectorRegistry, Gauge, Counter, push_to_gateway
 
 
 FORMAT = '%(asctime)s [%(process)d] [%(levelname)s] [%(name)s] %(message)s'
 
+TABLE_DEF = """
+CREATE TABLE `alembic_version` (
+    `version_num` varchar(255) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=UTF8MB4 COLLATE=utf8mb4_bin;
+"""
+
 logger = logging.getLogger(__name__)
 
-def run(db_connection_string, push_gateway_addr, job_id, run_seconds,
-        fail_seconds):
+def run(db_connection_string, push_gateway_addr, job_id, write_version,
+        run_seconds, fail_seconds):
 
     logger.debug('Starting migration')
     registry = CollectorRegistry()
@@ -51,9 +61,44 @@ def run(db_connection_string, push_gateway_addr, job_id, run_seconds,
         logger.debug('%s/%s items completed', i, run_seconds)
         time.sleep(1)
 
+    # Write the completion to the database
+    _write_database_version(db_connection_string, write_version)
     complete.set(1)
     completion_percent.set(100)
     push_to_gateway(push_gateway_addr, job=job_id, registry=registry)
+
+
+def _parse_mysql_dsn(db_connection_string):
+    # DO NOT use this regex as authoritative for a MySQL DSN
+    matcher = re.match(
+        r'([^:]+):([^@]+)@tcp\(([^:]+):([0-9]+)\)\/([a-zA-Z0-9]+)',
+        db_connection_string,
+    )
+    assert matcher is not None
+
+    return {
+        "host": matcher.group(3),
+        "user": matcher.group(1),
+        "password": matcher.group(2),
+        "database": matcher.group(5),
+        "port": int(matcher.group(4)),
+    }
+
+
+def _write_database_version(db_connection_string, version):
+    connection_params = _parse_mysql_dsn(db_connection_string)
+    db_conn = pymysql.connect(autocommit=True, **connection_params)
+
+    try:
+        with db_conn.cursor() as cursor:
+            sql = "UPDATE alembic_version SET version_num = %s"
+            cursor.execute(sql, (version))
+    except pymysql.err.ProgrammingError:
+        # Likely the table was missing
+        with db_conn.cursor() as cursor:
+            cursor.execute(TABLE_DEF)
+            create = "INSERT INTO alembic_version (version_num) VALUES (%s)"
+            cursor.execute(create, (version))
 
 
 if __name__ == '__main__':
@@ -86,12 +131,19 @@ if __name__ == '__main__':
         type=int,
         help='Number of seconds after which to fail (default: succeed)',
     )
+    parser.add_argument(
+        '--write_version',
+        required=True,
+        type=str,
+        help='Database version to set after completion',
+    )
     args = parser.parse_args()
 
     run(
         os.environ['DBA_OP_CONNECTION_STRING'],
         os.environ['DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR'],
         os.environ['DBA_OP_MIGRATION_ID'],
+        args.write_version,
         args.seconds,
         args.fail_after,
     )
