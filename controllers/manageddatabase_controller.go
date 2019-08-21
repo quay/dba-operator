@@ -17,6 +17,8 @@ package controllers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -115,6 +117,8 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	}
 
 	if migrationToRun != nil {
+		log := log.WithValues("migration", migrationToRun.Name)
+
 		// Check if this migration is already running
 		labelSelector := make(map[string]string)
 		labelSelector["migration-uid"] = string(migrationToRun.UID)
@@ -126,41 +130,87 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
+		// We're not running a migration
 		if len(childJobs.Items) == 0 {
-			// Start the migration
-			log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous, "newVersion", migrationToRun.Name)
+			if migrationToRun.Spec.Previous != "" {
+				// Deprovision the user account from two migrations ago, if there was one
+				currentVersion := c.migrationGraph.Find(migrationToRun.Spec.Previous)
+				if currentVersion == nil {
+					notFound := fmt.Errorf("Unable to find current migration: %s", version)
+					log.Error(notFound, "Missing migration", "missingVersion", version)
+					db.Status.Errors = append(db.Status.Errors, notFound.Error())
+					return ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}, notFound
+				}
 
+				if currentVersion.Version.Spec.Previous != "" {
+					prevUsername := migrationUsername(currentVersion.Version.Spec.Previous)
+					log.Info("Deprovisioning user account", "username", prevUsername)
+
+					// Delete the secret that the application may be using
+					prevSecretName := migrationName(db.Name, currentVersion.Version.Spec.Previous)
+					if err := deleteSecret(ctx, c.Client, req.Namespace, prevSecretName); err != nil {
+						return ctrl.Result{}, err
+					}
+
+					// Delete the user acccount
+					if err := admin.VerifyUnusedAndDeleteCredentials(prevUsername); err != nil {
+						return ctrl.Result{}, err
+					}
+				} else {
+					log.Info("No prior migration that requires cleanup")
+				}
+			} else {
+				log.Info("No prior migration that requires cleanup")
+			}
+
+			// Provision the user account
+			newUsername := migrationUsername(migrationToRun.Name)
+			newPassword, err := randPassword()
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			log.Info("Provisioning user account", "username", newUsername)
+			if err := admin.WriteCredentials(newUsername, newPassword); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Write the secret that the application will use
+			secretLabels := getStandardLabels(&db, migrationToRun)
+			newSecretName := migrationName(db.Name, migrationToRun.Name)
+			if err := writeCredentialsSecret(ctx, c.Client, req.Namespace, newSecretName, newUsername, newPassword, secretLabels); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Start the migration
+			log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous)
 			job, err := c.constructJobForMigration(&db, migrationToRun, db.Spec.Connection.DSNSecret)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
 
 			if err := c.Create(ctx, job); err != nil {
-				log.Error(err, "unable to create Job for migration", "job", job, "migration", migrationToRun)
+				log.Error(err, "unable to create Job for migration", "job", job)
 				return ctrl.Result{}, err
 			}
 		} else {
-			log.Info("Found matching migration", "migration", migrationToRun.Name, "database", db.Name)
+			log.Info("Found matching migration")
+
+			// Determine if the migration is done
+			migrationToCheck := childJobs.Items[0]
+			if migrationToCheck.Status.Succeeded > 0 {
+				log.Info("Migration is complete")
+
+				// TODO: Maybe do some cleanup here until TTLAfterFinished is ready
+			}
 		}
 	}
-
-	// err = admin.WriteCredentials("testusername", "testpassword")
-	// if err != nil {
-	// 	log.Error(err, "unable to create new database user", "username", "testusername")
-	// 	return ctrl.Result{}, err
-	// }
-
-	// err = admin.VerifyUnusedAndDeleteCredentials("testusername")
-	// if err != nil {
-	// 	log.Error(err, "unable to delete credentials", "username", "testusername")
-	// 	return ctrl.Result{}, err
-	// }
 
 	return ctrl.Result{}, nil
 }
 
 func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration, secretName string) (*batchv1.Job, error) {
-	name := fmt.Sprintf("%s-%s", managedDatabase.Name, migration.Name)
+	name := migrationName(managedDatabase.Name, migration.Name)
 
 	var containerSpec corev1.Container
 	migration.Spec.MigrationContainerSpec.DeepCopyInto(&containerSpec)
@@ -179,12 +229,7 @@ func (c *ManagedDatabaseController) constructJobForMigration(managedDatabase *db
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				"migration":     string(migration.Name),
-				"migration-uid": string(migration.UID),
-				"database":      string(managedDatabase.Name),
-				"database-uid":  string(managedDatabase.UID),
-			},
+			Labels:      getStandardLabels(managedDatabase, migration),
 			Annotations: make(map[string]string),
 			Name:        name,
 			Namespace:   managedDatabase.Namespace,
@@ -232,14 +277,11 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 
 func (c *ManagedDatabaseController) initializeAdminConnection(ctx context.Context, namespace string, conn dba.DatabaseConnectionInfo) (dbadmin.DbAdmin, error) {
 
-	var secretName = types.NamespacedName{Namespace: namespace, Name: conn.DSNSecret}
+	secretName := types.NamespacedName{Namespace: namespace, Name: conn.DSNSecret}
 
 	var credsSecret corev1.Secret
 	if err := c.Get(ctx, secretName, &credsSecret); err != nil {
 		log.Error(err, "unable to fetch credentials secret")
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
 		return nil, err
 	}
 
@@ -271,4 +313,57 @@ func ignoreNotFound(err error) error {
 		return nil
 	}
 	return err
+}
+
+func migrationName(dbName, migrationName string) string {
+	return fmt.Sprintf("%s-%s", dbName, migrationName)
+}
+
+func migrationUsername(migrationName string) string {
+	return fmt.Sprintf("dba_%s", migrationName)
+}
+
+func randPassword() (string, error) {
+	identBytes := make([]byte, 16)
+	if _, err := rand.Read(identBytes); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(identBytes), nil
+}
+
+func getStandardLabels(db *dba.ManagedDatabase, migration *dba.DatabaseMigration) map[string]string {
+	return map[string]string{
+		"migration":     string(migration.Name),
+		"migration-uid": string(migration.UID),
+		"database":      string(db.Name),
+		"database-uid":  string(db.UID),
+	}
+}
+
+func deleteSecret(ctx context.Context, apiClient client.Client, namespace, secretName string) error {
+	qSecretName := types.NamespacedName{Namespace: namespace, Name: secretName}
+	var secret corev1.Secret
+	if err := apiClient.Get(ctx, qSecretName, &secret); err != nil {
+		log.Error(err, "unable to fetch credentials secret")
+		return err
+	}
+	return apiClient.Delete(ctx, &secret)
+}
+
+func writeCredentialsSecret(ctx context.Context, apiClient client.Client, namespace, secretName, username, password string, labels map[string]string) error {
+	newSecret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      labels,
+			Annotations: make(map[string]string),
+			Name:        secretName,
+			Namespace:   namespace,
+		},
+		StringData: map[string]string{
+			"username": username,
+			"password": password,
+		},
+	}
+
+	return apiClient.Create(ctx, &newSecret)
 }
