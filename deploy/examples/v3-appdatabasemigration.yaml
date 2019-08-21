@@ -1,11 +1,11 @@
 apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
 kind: DatabaseMigration
 metadata:
-  name: v2
+  name: v3
 spec:
-  previous: v1
+  previous: v2
   migrationContainerSpec: 
-    name: v2-phase2-backfill
+    name: v3-phase3-stop-writing
     image: quay.io/quaymigrations/test
-    command: ["python", "migration.py", "--write_version", "v2"]
+    command: ["python", "migration.py", "--write_version", "v3", "--fail_after", "10"]
   scalable: true

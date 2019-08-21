@@ -6,4 +6,4 @@ spec:
   connection:
     engine: mysql
     dsnSecret: quayiocreds
-  desiredSchemaVersion: v2
+  desiredSchemaVersion: v3
