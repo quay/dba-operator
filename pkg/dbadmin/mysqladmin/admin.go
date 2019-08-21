@@ -150,26 +150,17 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 	)
 }
 
-func (mdba *MySQLDbAdmin) GetSchemaVersion() (version string, err error) {
-	var rows *sql.Rows
-	rows, err = mdba.handle.Query(mdba.metadata.GetVersionQuery())
+func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
+	versionRow := mdba.handle.QueryRow(mdba.metadata.GetVersionQuery())
+
+	var version string
+	err := versionRow.Scan(&version)
 	if err != nil {
 		mysqlErr, ok := err.(*mysql.MySQLError)
 		if ok && mysqlErr.Number == 1146 {
 			// No migration metadata, likely an empty database
 			return "", nil
 		}
-		return version, err
-	}
-
-	defer rows.Close()
-
-	err = rows.Scan(&version)
-	if err != nil {
-		return version, err
-	}
-
-	if rows.Err() != nil {
 		return version, err
 	}
 
