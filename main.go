@@ -17,7 +17,11 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"os"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	dbaoperatorv1alpha1 "github.com/app-sre/dba-operator/api/v1alpha1"
 	"github.com/app-sre/dba-operator/controllers"
@@ -32,6 +36,8 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	addr = flag.String("listen-address", ":8080", "The address to listen on for prometheus HTTP requests.")
 )
 
 func init() {
@@ -42,6 +48,8 @@ func init() {
 }
 
 func main() {
+	flag.Parse()
+
 	var metricsAddr string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
@@ -61,15 +69,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (controllers.NewManagedDatabaseController(
+	controller, metricsToRegister := controllers.NewManagedDatabaseController(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		ctrl.Log.WithName("controllers").WithName("ManagedDatabase"),
-	)).SetupWithManager(mgr); err != nil {
+	)
+	if err = controller.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedDatabase")
 		os.Exit(1)
 	}
+
+	for _, metric := range metricsToRegister {
+		prometheus.MustRegister(metric)
+	}
 	// +kubebuilder:scaffold:builder
+
+	go func() {
+		setupLog.Info("starting prometheus")
+		http.Handle("/metrics", promhttp.Handler())
+		setupLog.Error(http.ListenAndServe(*addr, nil), "Error running prometheus http server")
+		os.Exit(1)
+	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

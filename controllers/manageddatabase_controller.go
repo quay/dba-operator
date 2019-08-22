@@ -20,11 +20,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 	batchv1 "k8s.io/api/batch/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,15 +50,54 @@ type ManagedDatabaseController struct {
 	Log            logr.Logger
 	migrationGraph *vergraph.VersionGraph
 	Scheme         *runtime.Scheme
+	metrics        ControllerMetrics
+	databaseLinks  map[string]interface{}
 }
 
-func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) *ManagedDatabaseController {
+type ControllerMetrics struct {
+	MigrationJobsSpawned prometheus.Counter
+	CredentialsCreated   prometheus.Counter
+	CredentialsRevoked   prometheus.Counter
+	RegisteredMigrations prometheus.Gauge
+	ManagedDatabases     prometheus.Gauge
+}
+
+func getAllMetrics(metrics ControllerMetrics) []prometheus.Collector {
+	metricsValue := reflect.ValueOf(metrics)
+	collectors := make([]prometheus.Collector, 0, metricsValue.NumField())
+	for i := 0; i < metricsValue.NumField(); i++ {
+		collectors = append(collectors, metricsValue.Field(i).Interface().(prometheus.Collector))
+	}
+	return collectors
+}
+
+func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) (*ManagedDatabaseController, []prometheus.Collector) {
+	metrics := ControllerMetrics{
+		MigrationJobsSpawned: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "dba_operator_migration_jobs_spawned_total",
+		}),
+		CredentialsCreated: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "dba_operator_credentials_created_total",
+		}),
+		CredentialsRevoked: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "dba_operator_credentials_revoked_total",
+		}),
+		RegisteredMigrations: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dba_operator_registered_migrations_total",
+		}),
+		ManagedDatabases: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dba_operator_managed_databases_total",
+		}),
+	}
+
 	return &ManagedDatabaseController{
 		Client:         c,
 		Scheme:         scheme,
 		Log:            l,
+		metrics:        metrics,
 		migrationGraph: vergraph.NewVersionGraph(),
-	}
+		databaseLinks:  make(map[string]interface{}),
+	}, getAllMetrics(metrics)
 }
 
 type ManagedDatabaseReconciler struct {
@@ -82,6 +124,10 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		// on deleted requests.
 		return ctrl.Result{}, ignoreNotFound(err)
 	}
+
+	// TODO: handle the delete case
+	c.databaseLinks[db.SelfLink] = nil
+	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
 	admin, err := c.initializeAdminConnection(ctx, req.Namespace, db.Spec.Connection)
 	if err != nil {
@@ -157,6 +203,8 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 					if err := admin.VerifyUnusedAndDeleteCredentials(prevUsername); err != nil {
 						return ctrl.Result{}, err
 					}
+
+					c.metrics.CredentialsRevoked.Inc()
 				} else {
 					log.Info("No prior migration that requires cleanup")
 				}
@@ -183,6 +231,8 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 
+			c.metrics.CredentialsCreated.Inc()
+
 			// Start the migration
 			log.Info("Running migration", "currentVersion", migrationToRun.Spec.Previous)
 			job, err := c.constructJobForMigration(&db, migrationToRun, db.Spec.Connection.DSNSecret)
@@ -194,6 +244,8 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 				log.Error(err, "unable to create Job for migration", "job", job)
 				return ctrl.Result{}, err
 			}
+
+			c.metrics.MigrationJobsSpawned.Inc()
 		} else {
 			log.Info("Found matching migration")
 
@@ -270,6 +322,8 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 	}
 
 	c.migrationGraph.Add(&db)
+
+	c.metrics.RegisteredMigrations.Set(float64(c.migrationGraph.Len()))
 
 	log.Info("Updated migration graph", "graphLen", c.migrationGraph.Len(), "missingSources", c.migrationGraph.Missing())
 
