@@ -11,10 +11,16 @@ container should return `0` on success or non-zero on failure.
 The address of the prometheus push gateway, in the form of:
 `localhost:9091`
 
-### DBA_OP_MIGRATION_ID
+### DBA_OP_JOB_ID
 
 A unique opaque string that is used by the operator to identify the specific
 migration being monitored.
+
+### DBA_OP_LABEL_*
+
+Labels that should be added as groupings to the prometheus job. Migration
+containers should truncate the prefix `DBA_OP_LABEL_` and lower case any
+remainder before setting the grouping.
 
 ### DBA_OP_CONNECTION_STRING
 
@@ -26,7 +32,7 @@ and logical database schema, e.g.:
 ## Prometheus Metrics
 
 The container must push the following metrics to the prometheus push gateway
-specified, with the `job_id` set to the `MIGRATION_ID` as often as possible.
+specified, with the `job_id` set to the `DBA_OP_JOB_ID` as often as possible.
 
 ### completion_percent
 

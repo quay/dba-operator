@@ -18,10 +18,11 @@ CREATE TABLE `alembic_version` (
     `version_num` varchar(255) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=UTF8MB4 COLLATE=utf8mb4_bin;
 """
+PROM_LABEL_PREFIX = 'DBA_OP_LABEL_'
 
 logger = logging.getLogger(__name__)
 
-def run(db_connection_string, push_gateway_addr, job_id, write_version,
+def run(db_connection_string, push_gateway_addr, job_id, labels, write_version,
         run_seconds, fail_seconds):
 
     logger.debug('Starting migration')
@@ -48,16 +49,20 @@ def run(db_connection_string, push_gateway_addr, job_id, write_version,
         registry=registry,
     )
 
+    def update_metrics():
+        push_to_gateway(push_gateway_addr, job=job_id, registry=registry,
+                        grouping_key=labels)
+
     failed.set(0)
     for i in range(run_seconds):
         if i >= fail_seconds:
             failed.set(1)
-            push_to_gateway(push_gateway_addr, job=job_id, registry=registry)
+            update_metrics()
             sys.exit(1)
 
         items_completed.inc(1)
         completion_percent.set(float(i)/run_seconds)
-        push_to_gateway(push_gateway_addr, job=job_id, registry=registry)
+        update_metrics()
         logger.debug('%s/%s items completed', i, run_seconds)
         time.sleep(1)
 
@@ -65,7 +70,7 @@ def run(db_connection_string, push_gateway_addr, job_id, write_version,
     _write_database_version(db_connection_string, write_version)
     complete.set(1)
     completion_percent.set(100)
-    push_to_gateway(push_gateway_addr, job=job_id, registry=registry)
+    update_metrics()
 
 
 def _parse_mysql_dsn(db_connection_string):
@@ -101,12 +106,16 @@ def _write_database_version(db_connection_string, version):
             cursor.execute(create, (version))
 
 
+def _process_label_key(label_key):
+    return label_key[len(PROM_LABEL_PREFIX):].lower()
+
+
 if __name__ == '__main__':
     logging.basicConfig(format=FORMAT, level=logging.DEBUG)
 
     check_vars = [
         'DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR',
-        'DBA_OP_MIGRATION_ID',
+        'DBA_OP_JOB_ID',
         'DBA_OP_CONNECTION_STRING',
     ]
     for env_var_name in check_vars:
@@ -114,7 +123,7 @@ if __name__ == '__main__':
             logger.error('Must provide the environment variable %s', env_var_name)
             sys.exit(1)
     
-    logger = logging.getLogger(os.environ['DBA_OP_MIGRATION_ID'])
+    logger = logging.getLogger(os.environ['DBA_OP_JOB_ID'])
 
     parser = argparse.ArgumentParser(
         description='Run a fake migration container.',
@@ -139,10 +148,15 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
+    # Parse the env to find labels that we need to add
+    labels = {_process_label_key(k): v for k, v in os.environ.items()
+              if k.startswith(PROM_LABEL_PREFIX)}
+
     run(
         os.environ['DBA_OP_CONNECTION_STRING'],
         os.environ['DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR'],
-        os.environ['DBA_OP_MIGRATION_ID'],
+        os.environ['DBA_OP_JOB_ID'],
+        labels,
         args.write_version,
         args.seconds,
         args.fail_after,
