@@ -128,6 +128,31 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 	)
 }
 
+func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error) {
+	rows, err := mdba.handle.Query(
+		"SELECT user FROM mysql.user WHERE user LIKE ?",
+		usernamePrefix+"%",
+	)
+	if err != nil {
+		return []string{}, err
+	}
+
+	var usernames []string
+	defer rows.Close()
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			return []string{}, err
+		}
+		usernames = append(usernames, username)
+	}
+	if err := rows.Err(); err != nil {
+		return []string{}, err
+	}
+
+	return usernames, nil
+}
+
 func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) error {
 	sessionCountRow := mdba.handle.QueryRow(
 		"SELECT COUNT(*) FROM information_schema.processlist WHERE user = ?",
