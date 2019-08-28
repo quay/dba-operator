@@ -223,9 +223,6 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		dbUsernames.Add(migrationDBUsername(oneMigration.version.Spec.Previous))
 	}
 
-	fmt.Printf("Desired secret names: %v\n", secretNames)
-	fmt.Printf("Desired db names: %v\n", dbUsernames)
-
 	// List the secrets in the system
 	secretList, err := listSecretsForDatabase(oneMigration.ctx, c.Client, oneMigration.db)
 	if err != nil {
@@ -236,11 +233,9 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	for _, foundSecret := range secretList.Items {
 		existingSecretSet.Add(foundSecret.Name)
 	}
-	fmt.Printf("Existing secret names: %v\n", existingSecretSet)
 
 	// Remove any secrets that shouldn't be there
 	secretsToRemove := existingSecretSet.Difference(secretNames)
-	fmt.Printf("To remove secret names: %v\n", secretsToRemove)
 	for secretToRemove := range secretsToRemove.Iterator().C {
 		if err := deleteSecretIfUnused(oneMigration.ctx, oneMigration.log, c.Client, oneMigration.db.Namespace, secretToRemove.(string)); err != nil {
 			return err
@@ -258,11 +253,9 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	for _, username := range existingDbUsernames {
 		existingDbUsernamesSet.Add(username)
 	}
-	fmt.Printf("Existing db usernames: %v\n", existingDbUsernamesSet)
 
 	// Remove any users that shouldn't be there
 	dbUsersToRemove := existingDbUsernamesSet.Difference(dbUsernames)
-	fmt.Printf("To remove db usernames: %v\n", dbUsersToRemove)
 	for dbUserToRemoveItem := range dbUsersToRemove.Iterator().C {
 		dbUserToRemove := dbUserToRemoveItem.(string)
 		oneMigration.log.Info("Deprovisioning user account", "username", dbUserToRemove)
