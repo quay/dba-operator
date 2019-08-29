@@ -75,7 +75,7 @@ type DatabasemMigrationReconciler struct {
 
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases;databasemigrations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases/status;databasemigrations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=,resources=secrets,verbs=get;list
+// +kubebuilder:rbac:groups=,resources=secrets,verbs=get;list;create;delete
 
 func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (ctrl.Result, error) {
 	var ctx = context.Background()
