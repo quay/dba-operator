@@ -99,19 +99,19 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	version, err := admin.GetSchemaVersion()
+	currentDbVersion, err := admin.GetSchemaVersion()
 	if err != nil {
 		log.Error(err, "unable to retrieve database version")
 		return ctrl.Result{}, err
 	}
-	log.Info("Versions", "startVersion", version, "desiredVersion", db.Spec.DesiredSchemaVersion)
+	log.Info("Versions", "startVersion", currentDbVersion, "desiredVersion", db.Spec.DesiredSchemaVersion)
 
-	db.Status.CurrentVersion = version
+	db.Status.CurrentVersion = currentDbVersion
 
 	needVersion := db.Spec.DesiredSchemaVersion
 	var migrationToRun *dba.DatabaseMigration
 
-	for needVersion != version {
+	for needVersion != currentDbVersion {
 		found, err := loadMigration(ctx, log, c.Client, db.Namespace, needVersion)
 		if err != nil {
 			notFound := errors.Wrapf(err, "Unable to find required migration: %s", needVersion)
@@ -132,7 +132,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 			version: migrationToRun,
 		}
 
-		if err := c.reconcileCredentialsForVersion(oneMigration, admin); err != nil {
+		if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
 			return ctrl.Result{}, err
 		}
 
@@ -227,14 +227,19 @@ func loadMigration(ctx context.Context, log logr.Logger, apiClient client.Client
 	return &version, nil
 }
 
-func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration migrationContext, admin dbadmin.DbAdmin) error {
+func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration migrationContext, admin dbadmin.DbAdmin, currentDbVersion string) error {
 	oneMigration.log.Info("Reconciling credentials")
 
 	// Compute the list of credentials that we need for this database version
-	// TODO: we only want to write the credentials for the current version if
-	// the db has actually made it here
-	secretNames := mapset.NewSet(migrationName(oneMigration.db.Name, oneMigration.version.Name))
-	dbUsernames := mapset.NewSet(migrationDBUsername(oneMigration.version.Name))
+	secretNames := mapset.NewSet()
+	dbUsernames := mapset.NewSet()
+
+	if currentDbVersion == oneMigration.version.Name {
+		// We have achieved the proper version, so the credentials for that
+		// version should be present/added
+		secretNames.Add(migrationName(oneMigration.db.Name, oneMigration.version.Name))
+		dbUsernames.Add(migrationDBUsername(oneMigration.version.Name))
+	}
 
 	if oneMigration.version.Spec.Previous != "" {
 		secretNames.Add(migrationName(oneMigration.db.Name, oneMigration.version.Spec.Previous))
