@@ -45,6 +45,20 @@ This project will use the operator pattern, and a set of requirements about defi
 1. Generate and add credentials for accessing the database from this migration version 
   1. Write secret containing the password that was generated
 
+### Hints
+
+The following are desired scenarios that we aim to be able to detect via hints
+and running database metadata.
+
+1. Applying a blocking index creation to a table that is large
+1. Applying a blocking index creation to a table that has heavy writes
+1. Adding a column to a table that is large
+1. Adding a column to a table that has heavy writes
+1. Adding a constraint to a column on a table that is large
+1. Adding a constraint to a column on a table that has heavy writes
+1. Making a column non-null when the database existing nulls
+1. Adding a non-null column without providing a server default on a table that already has data
+
 ### FAQs
 
 #### Why report success or failure to prometheus when the job status has that information already?
