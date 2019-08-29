@@ -79,5 +79,9 @@ func writeCredentialsSecret(ctx context.Context, apiClient client.Client, namesp
 		},
 	}
 
+	// TODO figure out a policy for adding annotations and labels
+
+	// TODO: set the owner reference for the secret to the database
+
 	return apiClient.Create(ctx, &newSecret)
 }

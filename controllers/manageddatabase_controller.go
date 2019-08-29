@@ -176,6 +176,8 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 
 			if job.Status.Succeeded > 0 {
 				oneMigration.log.Info("Migration is complete")
+
+				// TODO: should we write the metric here or wait until cleanup?
 			}
 		} else {
 			// This is an old job and should be cleaned up
@@ -184,6 +186,8 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 			if err := c.Client.Delete(oneMigration.ctx, &job); err != nil {
 				return err
 			}
+
+			// TODO: maybe write metrics here?
 		}
 	}
 
@@ -215,6 +219,8 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	oneMigration.log.Info("Reconciling credentials")
 
 	// Compute the list of credentials that we need for this database version
+	// TODO: we only want to write the credentials for the current version if
+	// the db has actually made it here
 	secretNames := mapset.NewSet(migrationName(oneMigration.db.Name, oneMigration.version.Name))
 	dbUsernames := mapset.NewSet(migrationDBUsername(oneMigration.version.Name))
 
@@ -243,6 +249,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	}
 
 	// List credentials in the database that match our namespace prefix
+	// TODO: extract out prefix into config or a global
 	existingDbUsernames, err := admin.ListUsernames("dba_")
 	if err != nil {
 		return err
@@ -311,6 +318,8 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 		return ctrl.Result{}, ignoreNotFound(err)
 	}
 
+	// TODO handle the delete and update cases
+
 	c.migrationGraph.Add(&db)
 
 	c.metrics.RegisteredMigrations.Set(float64(c.migrationGraph.Len()))
@@ -349,6 +358,7 @@ func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient c
 
 	switch conn.Engine {
 	case "mysql":
+		// TODO: choose the migration engine from data in the CR (e.g. alembic)
 		return mysqladmin.CreateMySQLAdmin(dsn, alembic.CreateAlembicMigrationMetadata())
 	}
 	return nil, fmt.Errorf("Unknown database engine: %s", conn.Engine)
