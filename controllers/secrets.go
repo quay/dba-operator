@@ -8,7 +8,9 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -65,7 +67,18 @@ func listSecretsForDatabase(ctx context.Context, apiClient client.Client, owning
 	return &foundSecrets, nil
 }
 
-func writeCredentialsSecret(ctx context.Context, apiClient client.Client, namespace, secretName, username, password string, labels map[string]string) error {
+func writeCredentialsSecret(
+	ctx context.Context,
+	apiClient client.Client,
+	namespace string,
+	secretName string,
+	username string,
+	password string,
+	labels map[string]string,
+	owner metav1.Object,
+	scheme *runtime.Scheme,
+) error {
+
 	newSecret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:      labels,
@@ -81,7 +94,7 @@ func writeCredentialsSecret(ctx context.Context, apiClient client.Client, namesp
 
 	// TODO figure out a policy for adding annotations and labels
 
-	// TODO: set the owner reference for the secret to the database
+	ctrl.SetControllerReference(owner, &newSecret, scheme)
 
 	return apiClient.Create(ctx, &newSecret)
 }

@@ -312,7 +312,17 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		// Write the corresponding secret
 		secretLabels := getStandardLabels(oneMigration.db, oneMigration.version)
 		newSecretName := migrationName(oneMigration.db.Name, oneMigration.version.Name)
-		if err := writeCredentialsSecret(oneMigration.ctx, c.Client, oneMigration.db.Namespace, newSecretName, dbUserToAdd, newPassword, secretLabels); err != nil {
+		if err := writeCredentialsSecret(
+			oneMigration.ctx,
+			c.Client,
+			oneMigration.db.Namespace,
+			newSecretName,
+			dbUserToAdd,
+			newPassword,
+			secretLabels,
+			oneMigration.db,
+			c.Scheme,
+		); err != nil {
 			return err
 		}
 
