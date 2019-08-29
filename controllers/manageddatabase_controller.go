@@ -367,7 +367,6 @@ func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient c
 
 	switch dbSpec.Connection.Engine {
 	case "mysql":
-		// TODO: choose the migration engine from data in the CR (e.g. alembic)
 		return mysqladmin.CreateMySQLAdmin(dsn, migrationEngine)
 	}
 	return nil, fmt.Errorf("Unknown database engine: %s", dbSpec.Connection.Engine)
