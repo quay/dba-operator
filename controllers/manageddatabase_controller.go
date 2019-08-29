@@ -83,14 +83,17 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 
 	var db dba.ManagedDatabase
 	if err := c.Get(ctx, req.NamespacedName, &db); err != nil {
+		if apierrs.IsNotFound(err) {
+			delete(c.databaseLinks, db.SelfLink)
+			c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
+
+			return ctrl.Result{}, nil
+		}
+
 		log.Error(err, "unable to fetch ManagedDatabase")
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
-		return ctrl.Result{}, ignoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
-	// TODO: handle the delete case
 	c.databaseLinks[db.SelfLink] = nil
 	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
@@ -370,13 +373,6 @@ func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient c
 		return mysqladmin.CreateMySQLAdmin(dsn, migrationEngine)
 	}
 	return nil, fmt.Errorf("Unknown database engine: %s", dbSpec.Connection.Engine)
-}
-
-func ignoreNotFound(err error) error {
-	if apierrs.IsNotFound(err) {
-		return nil
-	}
-	return err
 }
 
 func migrationName(dbName, migrationName string) string {
