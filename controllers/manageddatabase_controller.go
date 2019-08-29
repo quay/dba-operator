@@ -26,6 +26,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	batchv1 "k8s.io/api/batch/v1"
 
+	mapset "github.com/deckarep/golang-set"
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,33 +37,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	dba "github.com/app-sre/dba-operator/api/v1alpha1"
-	"github.com/app-sre/dba-operator/internal/vergraph"
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/alembic"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
-	mapset "github.com/deckarep/golang-set"
 )
 
 // ManagedDatabaseReconciler reconciles a ManagedDatabase object
 type ManagedDatabaseController struct {
 	client.Client
-	Log            logr.Logger
-	migrationGraph *vergraph.VersionGraph
-	Scheme         *runtime.Scheme
-	metrics        ControllerMetrics
-	databaseLinks  map[string]interface{}
+	Log           logr.Logger
+	Scheme        *runtime.Scheme
+	metrics       ControllerMetrics
+	databaseLinks map[string]interface{}
 }
 
 func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) (*ManagedDatabaseController, []prometheus.Collector) {
 	metrics := generateControllerMetrics()
 
 	return &ManagedDatabaseController{
-		Client:         c,
-		Scheme:         scheme,
-		Log:            l,
-		metrics:        metrics,
-		migrationGraph: vergraph.NewVersionGraph(),
-		databaseLinks:  make(map[string]interface{}),
+		Client:        c,
+		Scheme:        scheme,
+		Log:           l,
+		metrics:       metrics,
+		databaseLinks: make(map[string]interface{}),
 	}, getAllMetrics(metrics)
 }
 
@@ -114,20 +112,19 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	var migrationToRun *dba.DatabaseMigration
 
 	for needVersion != version {
-		found := c.migrationGraph.Find(needVersion)
-		if found == nil {
-			notFound := fmt.Errorf("Unable to find required migration: %s", needVersion)
+		found, err := loadMigration(ctx, log, c.Client, db.Namespace, needVersion)
+		if err != nil {
+			notFound := errors.Wrapf(err, "Unable to find required migration: %s", needVersion)
 			log.Error(notFound, "Missing migration", "missingVersion", needVersion)
 			db.Status.Errors = append(db.Status.Errors, notFound.Error())
 			return ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}, notFound
 		}
 
-		migrationToRun = found.Version
-		needVersion = found.Version.Spec.Previous
+		migrationToRun = found
+		needVersion = found.Spec.Previous
 	}
 
 	if migrationToRun != nil {
-
 		oneMigration := migrationContext{
 			ctx:     ctx,
 			log:     log.WithValues("migration", migrationToRun.Name),
@@ -213,6 +210,21 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 	}
 
 	return nil
+}
+
+func loadMigration(ctx context.Context, log logr.Logger, apiClient client.Client, namespace, versionName string) (*dba.DatabaseMigration, error) {
+	path := types.NamespacedName{
+		Namespace: namespace,
+		Name:      versionName,
+	}
+
+	var version dba.DatabaseMigration
+	if err := apiClient.Get(ctx, path, &version); err != nil {
+		log.Error(err, "unable to fetch DatabaseMigration")
+		return nil, errors.Wrap(err, "unable to fetch DatabaseMigration")
+	}
+
+	return &version, nil
 }
 
 func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration migrationContext, admin dbadmin.DbAdmin) error {
@@ -306,25 +318,10 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 }
 
 func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request) (ctrl.Result, error) {
-	var ctx = context.Background()
-	var log = c.Log.WithValues("databasemigration", req.NamespacedName)
+	var _ = context.Background()
+	var _ = c.Log.WithValues("databasemigration", req.NamespacedName)
 
-	var db dba.DatabaseMigration
-	if err := c.Get(ctx, req.NamespacedName, &db); err != nil {
-		log.Error(err, "unable to fetch DatabaseMigration")
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
-		return ctrl.Result{}, ignoreNotFound(err)
-	}
-
-	// TODO handle the delete and update cases
-
-	c.migrationGraph.Add(&db)
-
-	c.metrics.RegisteredMigrations.Set(float64(c.migrationGraph.Len()))
-
-	log.Info("Updated migration graph", "graphLen", c.migrationGraph.Len(), "missingSources", c.migrationGraph.Missing())
+	// These are pure data, so nothing to do for now
 
 	return ctrl.Result{}, nil
 }
