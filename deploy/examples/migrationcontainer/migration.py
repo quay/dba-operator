@@ -69,7 +69,7 @@ def run(db_connection_string, push_gateway_addr, job_id, labels, write_version,
     # Write the completion to the database
     _write_database_version(db_connection_string, write_version)
     complete.set(1)
-    completion_percent.set(100)
+    completion_percent.set(1.0)
     update_metrics()
 
 
