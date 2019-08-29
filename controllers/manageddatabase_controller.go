@@ -42,6 +42,8 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
 )
 
+const DBUsernamePrefix = "dba_"
+
 // ManagedDatabaseReconciler reconciles a ManagedDatabase object
 type ManagedDatabaseController struct {
 	client.Client
@@ -266,8 +268,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	}
 
 	// List credentials in the database that match our namespace prefix
-	// TODO: extract out prefix into config or a global
-	existingDbUsernames, err := admin.ListUsernames("dba_")
+	existingDbUsernames, err := admin.ListUsernames(DBUsernamePrefix)
 	if err != nil {
 		return err
 	}
@@ -378,7 +379,7 @@ func migrationName(dbName, migrationName string) string {
 }
 
 func migrationDBUsername(migrationName string) string {
-	return fmt.Sprintf("dba_%s", migrationName)
+	return fmt.Sprintf("%s%s", DBUsernamePrefix, migrationName)
 }
 
 func randPassword() (string, error) {
