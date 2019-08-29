@@ -94,7 +94,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	c.databaseLinks[db.SelfLink] = nil
 	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
-	admin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, db.Spec.Connection)
+	admin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, &db.Spec)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
@@ -347,9 +347,9 @@ func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(reconcile.Func(c.ReconcileDatabaseMigration))
 }
 
-func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient client.Client, namespace string, conn dba.DatabaseConnectionInfo) (dbadmin.DbAdmin, error) {
+func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient client.Client, namespace string, dbSpec *dba.ManagedDatabaseSpec) (dbadmin.DbAdmin, error) {
 
-	secretName := types.NamespacedName{Namespace: namespace, Name: conn.DSNSecret}
+	secretName := types.NamespacedName{Namespace: namespace, Name: dbSpec.Connection.DSNSecret}
 
 	var credsSecret corev1.Secret
 	if err := apiClient.Get(ctx, secretName, &credsSecret); err != nil {
@@ -359,12 +359,18 @@ func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient c
 
 	dsn := string(credsSecret.Data["dsn"])
 
-	switch conn.Engine {
+	var migrationEngine dbadmin.MigrationEngine
+	switch dbSpec.MigrationEngine {
+	case "alembic":
+		migrationEngine = alembic.CreateAlembicMigrationEngine()
+	}
+
+	switch dbSpec.Connection.Engine {
 	case "mysql":
 		// TODO: choose the migration engine from data in the CR (e.g. alembic)
-		return mysqladmin.CreateMySQLAdmin(dsn, alembic.CreateAlembicMigrationMetadata())
+		return mysqladmin.CreateMySQLAdmin(dsn, migrationEngine)
 	}
-	return nil, fmt.Errorf("Unknown database engine: %s", conn.Engine)
+	return nil, fmt.Errorf("Unknown database engine: %s", dbSpec.Connection.Engine)
 }
 
 func ignoreNotFound(err error) error {

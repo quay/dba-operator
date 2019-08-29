@@ -26,6 +26,7 @@ import (
 type ManagedDatabaseSpec struct {
 	DesiredSchemaVersion string                 `json:"desiredSchemaVersion,omitempty"`
 	Connection           DatabaseConnectionInfo `json:"connection,omitempty"`
+	MigrationEngine      string                 `json:"migrationEngine,omitempty"`
 }
 
 // DatabaseConnectionInfo defines engine specific connection parameters to establish

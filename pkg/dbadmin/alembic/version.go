@@ -4,12 +4,12 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 )
 
-type AlembicMigrationMetadata struct{}
+type AlembicMigrationEngine struct{}
 
-func CreateAlembicMigrationMetadata() dbadmin.MigrationMetadata {
-	return &AlembicMigrationMetadata{}
+func CreateAlembicMigrationEngine() dbadmin.MigrationEngine {
+	return &AlembicMigrationEngine{}
 }
 
-func (amm *AlembicMigrationMetadata) GetVersionQuery() string {
+func (amm *AlembicMigrationEngine) GetVersionQuery() string {
 	return "SELECT version_num FROM alembic_version LIMIT 1"
 }

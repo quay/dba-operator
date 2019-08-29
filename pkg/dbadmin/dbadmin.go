@@ -10,6 +10,6 @@ type DbAdmin interface {
 	GetSchemaVersion() (string, error)
 }
 
-type MigrationMetadata interface {
+type MigrationEngine interface {
 	GetVersionQuery() string
 }

@@ -6,4 +6,5 @@ spec:
   connection:
     engine: mysql
     dsnSecret: quayiocreds
+  migrationEngine: alembic
   desiredSchemaVersion: v3

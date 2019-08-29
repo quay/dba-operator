@@ -15,7 +15,7 @@ import (
 type MySQLDbAdmin struct {
 	handle   *sql.DB
 	database string
-	metadata dbadmin.MigrationMetadata
+	engine   dbadmin.MigrationEngine
 }
 
 type sqlValue struct {
@@ -31,7 +31,7 @@ func noquote(cantBeQuoted string) sqlValue {
 	return sqlValue{value: &cantBeQuoted, quoted: false}
 }
 
-func CreateMySQLAdmin(dsn string, metadata dbadmin.MigrationMetadata) (dbadmin.DbAdmin, error) {
+func CreateMySQLAdmin(dsn string, engine dbadmin.MigrationEngine) (dbadmin.DbAdmin, error) {
 	parsed, err := mysql.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func CreateMySQLAdmin(dsn string, metadata dbadmin.MigrationMetadata) (dbadmin.D
 		return nil, err
 	}
 
-	return &MySQLDbAdmin{db, parsed.DBName, metadata}, err
+	return &MySQLDbAdmin{db, parsed.DBName, engine}, err
 }
 
 func randIdentifier(randomBytes int) string {
@@ -176,14 +176,14 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 }
 
 func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
-	versionRow := mdba.handle.QueryRow(mdba.metadata.GetVersionQuery())
+	versionRow := mdba.handle.QueryRow(mdba.engine.GetVersionQuery())
 
 	var version string
 	err := versionRow.Scan(&version)
 	if err != nil {
 		mysqlErr, ok := err.(*mysql.MySQLError)
 		if ok && mysqlErr.Number == 1146 {
-			// No migration metadata, likely an empty database
+			// No migration engine metadata, likely an empty database
 			return "", nil
 		}
 		return version, err
