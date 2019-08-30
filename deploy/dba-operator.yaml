@@ -1,0 +1,50 @@
+apiVersion: metacontroller.k8s.io/v1alpha1
+kind: CompositeController
+metadata:
+  name: dba-operator
+spec:
+  parentResource:
+    apiVersion: dba-operator/v1alpha1
+    resource: manageddatabases
+  hooks:
+    sync:
+      webhook:
+        url: http://dba-operator.hello/sync
+---
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: dba-operator
+  namespace: metacontroller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dba-operator
+  template:
+    metadata:
+      labels:
+        app: dba-operator
+    spec:
+      containers:
+      - name: controller
+        image: quay.io/quay/dba-operator:latest
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: hooks
+          mountPath: /node/hooks
+      volumes:
+      - name: hooks
+        configMap:
+          name: dba-operator
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dba-operator
+  namespace: metacontroller
+spec:
+  selector:
+    app: dba-operator
+  ports:
+- port: 80

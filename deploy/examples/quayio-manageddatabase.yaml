@@ -1,0 +1,10 @@
+apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
+kind: ManagedDatabase
+metadata:
+  name: quay-production
+spec:
+  connection:
+    engine: mysql
+    dsnSecret: quayiocreds
+  migrationEngine: alembic
+  desiredSchemaVersion: v3

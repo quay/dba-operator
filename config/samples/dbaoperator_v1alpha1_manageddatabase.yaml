@@ -1,0 +1,7 @@
+apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
+kind: ManagedDatabase
+metadata:
+  name: manageddatabase-sample
+spec:
+  # Add fields here
+  foo: bar

@@ -1,0 +1,20 @@
+apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
+kind: DatabaseMigration
+metadata:
+  name: v1
+spec:
+  previous: null
+  migrationContainerSpec:
+    name: v1-phase1-add-new-column
+    image: quay.io/quaymigrations/test
+    command: ["python", "migration.py", "--write_version", "v1"]
+  schemaHints:
+  - operation: addColumn
+    table: image
+    type: int
+  - operation: addIndex
+    table: image
+    column: storage
+    unique: false
+    foreignKey: true
+    nullable: true

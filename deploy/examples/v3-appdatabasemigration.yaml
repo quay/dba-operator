@@ -1,0 +1,11 @@
+apiVersion: dbaoperator.app-sre.redhat.com/v1alpha1
+kind: DatabaseMigration
+metadata:
+  name: v3
+spec:
+  previous: v2
+  migrationContainerSpec: 
+    name: v3-phase3-stop-writing
+    image: quay.io/quaymigrations/test
+    command: ["python", "migration.py", "--write_version", "v3", "--fail_after", "10"]
+  scalable: true
