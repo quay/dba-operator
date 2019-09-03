@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -329,8 +330,51 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		secretsToAdd.Remove(newSecretName)
 	}
 
-	// TODO: handle the case of regenerating any database users for which we've
-	// lost the secret (secretsToAdd remainder)
+	// Regenerate any missing secrets whose credentials are in the database
+	for secretToAddItem := range secretsToAdd.Iterator().C {
+		secretToAdd := secretToAddItem.(string)
+		oneMigration.log.Info("Missing database secret", "secret", secretToAdd)
+
+		secretMigration := migrationFromSecret(oneMigration.db.Name, secretToAdd)
+
+		// Renew the database user
+		dbUserToRenew := migrationDBUsername(secretMigration)
+		newPassword, err := randPassword()
+		if err != nil {
+			return nil
+		}
+
+		oneMigration.log.Info("Renewing user account", "username", dbUserToRenew)
+		if err := admin.VerifyUnusedAndDeleteCredentials(dbUserToRenew); err != nil {
+			return err
+		}
+
+		c.metrics.CredentialsRevoked.Inc()
+
+		if err := admin.WriteCredentials(dbUserToRenew, newPassword); err != nil {
+			return err
+		}
+
+		c.metrics.CredentialsCreated.Inc()
+
+		// Write the missing secret
+		secretLabels := getStandardLabels(oneMigration.db, oneMigration.version)
+		if err := writeCredentialsSecret(
+			oneMigration.ctx,
+			c.Client,
+			oneMigration.db.Namespace,
+			secretToAdd,
+			dbUserToRenew,
+			newPassword,
+			secretLabels,
+			oneMigration.db,
+			c.Scheme,
+		); err != nil {
+			return err
+		}
+
+	}
+
 	return nil
 }
 
@@ -393,6 +437,10 @@ func migrationName(dbName, migrationName string) string {
 
 func migrationDBUsername(migrationName string) string {
 	return fmt.Sprintf("%s%s", DBUsernamePrefix, migrationName)
+}
+
+func migrationFromSecret(dbName, secretName string) string {
+	return strings.TrimPrefix(secretName, dbName+"-")
 }
 
 func randPassword() (string, error) {
