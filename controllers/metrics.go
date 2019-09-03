@@ -6,7 +6,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-type ControllerMetrics struct {
+// ManagedDatabaseControllerMetrics should contain all of the metrics exported
+// by the ManagedDatabaseController
+type ManagedDatabaseControllerMetrics struct {
 	MigrationJobsSpawned prometheus.Counter
 	CredentialsCreated   prometheus.Counter
 	CredentialsRevoked   prometheus.Counter
@@ -14,7 +16,7 @@ type ControllerMetrics struct {
 	ManagedDatabases     prometheus.Gauge
 }
 
-func getAllMetrics(metrics ControllerMetrics) []prometheus.Collector {
+func getAllMetrics(metrics ManagedDatabaseControllerMetrics) []prometheus.Collector {
 	metricsValue := reflect.ValueOf(metrics)
 	collectors := make([]prometheus.Collector, 0, metricsValue.NumField())
 	for i := 0; i < metricsValue.NumField(); i++ {
@@ -23,8 +25,8 @@ func getAllMetrics(metrics ControllerMetrics) []prometheus.Collector {
 	return collectors
 }
 
-func generateControllerMetrics() ControllerMetrics {
-	return ControllerMetrics{
+func generateManagedDatabaseControllerMetrics() ManagedDatabaseControllerMetrics {
+	return ManagedDatabaseControllerMetrics{
 		MigrationJobsSpawned: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "dba_operator_migration_jobs_spawned_total",
 		}),

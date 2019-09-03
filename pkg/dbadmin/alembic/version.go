@@ -4,12 +4,16 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 )
 
-type AlembicMigrationEngine struct{}
+// MigrationEngine is a type which implements the MigrationEngine
+// interface for Alembic migrations
+type MigrationEngine struct{}
 
-func CreateAlembicMigrationEngine() dbadmin.MigrationEngine {
-	return &AlembicMigrationEngine{}
+// CreateMigrationEngine instantiates an MigrationEngine
+func CreateMigrationEngine() dbadmin.MigrationEngine {
+	return &MigrationEngine{}
 }
 
-func (amm *AlembicMigrationEngine) GetVersionQuery() string {
+// GetVersionQuery implements MigrationEngine
+func (amm *MigrationEngine) GetVersionQuery() string {
 	return "SELECT version_num FROM alembic_version LIMIT 1"
 }

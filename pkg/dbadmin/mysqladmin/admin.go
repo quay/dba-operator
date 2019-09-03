@@ -12,6 +12,7 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 )
 
+// MySQLDbAdmin is a type which implements DbAdmin for MySQL databases
 type MySQLDbAdmin struct {
 	handle   *sql.DB
 	database string
@@ -31,6 +32,8 @@ func noquote(cantBeQuoted string) sqlValue {
 	return sqlValue{value: &cantBeQuoted, quoted: false}
 }
 
+// CreateMySQLAdmin will instantiate a MySQLDbAdmin object with the specified
+// connection information and MigrationEngine.
 func CreateMySQLAdmin(dsn string, engine dbadmin.MigrationEngine) (dbadmin.DbAdmin, error) {
 	parsed, err := mysql.ParseDSN(dsn)
 	if err != nil {
@@ -110,6 +113,7 @@ func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) er
 	return tx.Commit()
 }
 
+// WriteCredentials implements DbADmin
 func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 
 	err := mdba.indirectSubstitute(
@@ -128,6 +132,7 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 	)
 }
 
+// ListUsernames implements DbADmin
 func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error) {
 	rows, err := mdba.handle.Query(
 		"SELECT user FROM mysql.user WHERE user LIKE ?",
@@ -153,6 +158,7 @@ func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error)
 	return usernames, nil
 }
 
+// VerifyUnusedAndDeleteCredentials implements DbAdmin
 func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) error {
 	sessionCountRow := mdba.handle.QueryRow(
 		"SELECT COUNT(*) FROM information_schema.processlist WHERE user = ?",
@@ -175,19 +181,19 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 	)
 }
 
+// GetSchemaVersion implements DbAdmin
 func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
 	versionRow := mdba.handle.QueryRow(mdba.engine.GetVersionQuery())
 
 	var version string
-	err := versionRow.Scan(&version)
-	if err != nil {
+	if err := versionRow.Scan(&version); err != nil {
 		mysqlErr, ok := err.(*mysql.MySQLError)
 		if ok && mysqlErr.Number == 1146 {
 			// No migration engine metadata, likely an empty database
 			return "", nil
 		}
-		return version, err
+		return "", err
 	}
 
-	return version, err
+	return version, nil
 }

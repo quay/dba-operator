@@ -42,19 +42,23 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
 )
 
+// DBUsernamePrefix is the sequence that will be prepended to migration
+// specific database credentials when created in a managed database
 const DBUsernamePrefix = "dba_"
 
-// ManagedDatabaseReconciler reconciles a ManagedDatabase object
+// ManagedDatabaseController reconciles ManagedDatabase and DatabaseMigration objects
 type ManagedDatabaseController struct {
 	client.Client
 	Log           logr.Logger
 	Scheme        *runtime.Scheme
-	metrics       ControllerMetrics
+	metrics       ManagedDatabaseControllerMetrics
 	databaseLinks map[string]interface{}
 }
 
+// NewManagedDatabaseController will instantiate a ManagedDatabaseController
+// with the supplied arguments and logical defaults.
 func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) (*ManagedDatabaseController, []prometheus.Collector) {
-	metrics := generateControllerMetrics()
+	metrics := generateManagedDatabaseControllerMetrics()
 
 	return &ManagedDatabaseController{
 		Client:        c,
@@ -65,18 +69,12 @@ func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l log
 	}, getAllMetrics(metrics)
 }
 
-type ManagedDatabaseReconciler struct {
-	controller *ManagedDatabaseController
-}
-
-type DatabasemMigrationReconciler struct {
-	controller *ManagedDatabaseController
-}
-
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases;databasemigrations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases/status;databasemigrations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=,resources=secrets,verbs=get;list;create;delete
 
+// ReconcileManagedDatabase should be invoked whenever there is a change to a
+// ManagedDatabase or one of the objects that are created on its behalf
 func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (ctrl.Result, error) {
 	var ctx = context.Background()
 	var log = c.Log.WithValues("manageddatabase", req.NamespacedName)
@@ -336,6 +334,8 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	return nil
 }
 
+// ReconcileDatabaseMigration should be invoked whenever there is a change to a
+// DatabaseMigration CR or any object owned by it.
 func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request) (ctrl.Result, error) {
 	var _ = context.Background()
 	var _ = c.Log.WithValues("databasemigration", req.NamespacedName)
@@ -345,6 +345,8 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
+// SetupWithManager should be called to finish initialization of a
+// ManagedDatbaseController and bind it to the manager specified.
 func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&dba.ManagedDatabase{}).
@@ -375,7 +377,7 @@ func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient c
 	var migrationEngine dbadmin.MigrationEngine
 	switch dbSpec.MigrationEngine {
 	case "alembic":
-		migrationEngine = alembic.CreateAlembicMigrationEngine()
+		migrationEngine = alembic.CreateMigrationEngine()
 	}
 
 	switch dbSpec.Connection.Engine {
