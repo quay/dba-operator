@@ -36,10 +36,18 @@ type DatabaseConnectionInfo struct {
 	DSNSecret string `json:"dsnSecret,omitempty"`
 }
 
+// ManagedDatabaseError contains information about an error that occurred when
+// reconciling this ManagedDatabase, and whether the error is considered
+// temporary/transient.
+type ManagedDatabaseError struct {
+	Message   string `json:"message,omitempty"`
+	Temporary bool   `json:"temporary,omitempty"`
+}
+
 // ManagedDatabaseStatus defines the observed state of ManagedDatabase
 type ManagedDatabaseStatus struct {
-	CurrentVersion string   `json:"currentVersion,omitempty"`
-	Errors         []string `json:"errors,omitempty"`
+	CurrentVersion string                 `json:"currentVersion,omitempty"`
+	Errors         []ManagedDatabaseError `json:"errors,omitempty"`
 }
 
 // +kubebuilder:object:root=true
