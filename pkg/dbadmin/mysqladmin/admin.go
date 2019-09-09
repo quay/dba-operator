@@ -10,6 +10,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
+	"github.com/app-sre/dba-operator/pkg/xerrors"
 )
 
 // MySQLDbAdmin is a type which implements DbAdmin for MySQL databases
@@ -37,7 +38,7 @@ func noquote(cantBeQuoted string) sqlValue {
 func CreateMySQLAdmin(dsn string, engine dbadmin.MigrationEngine) (dbadmin.DbAdmin, error) {
 	parsed, err := mysql.ParseDSN(dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Unable to parse connection dsn: %w", err)
 	}
 	if parsed.User == "" || parsed.Passwd == "" {
 		return nil, errors.New("Must provide username and password in the connection DSN")
@@ -48,10 +49,10 @@ func CreateMySQLAdmin(dsn string, engine dbadmin.MigrationEngine) (dbadmin.DbAdm
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Unable to open connection to db: %w", wrap(err))
 	}
 
-	return &MySQLDbAdmin{db, parsed.DBName, engine}, err
+	return &MySQLDbAdmin{db, parsed.DBName, engine}, nil
 }
 
 func randIdentifier(randomBytes int) string {
@@ -68,10 +69,10 @@ func randIdentifier(randomBytes int) string {
 // The design of this operator shouldn't require preventing injection as these values
 // are developer supplied and not end-user supplied, but it may help prevent errors
 // and should be considered a best practice.
-func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) error {
+func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) xerrors.EnhancedError {
 	tx, err := mdba.handle.Begin()
 	if err != nil {
-		return err
+		return wrap(err)
 	}
 	defer tx.Rollback()
 
@@ -87,7 +88,7 @@ func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) er
 
 		_, err = tx.Exec(fmt.Sprintf("SET @%s := ?", newIdent), arg.value)
 		if err != nil {
-			return err
+			return wrap(err)
 		}
 	}
 
@@ -96,21 +97,25 @@ func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) er
 	createStmt := fmt.Sprintf(`SET @%s := CONCAT("%s")`, stmtStringName, rawSQLStmt)
 	_, err = tx.Exec(createStmt)
 	if err != nil {
-		return err
+		return wrap(err)
 	}
 
 	stmtName := randIdentifier(16)
 	_, err = tx.Exec(fmt.Sprintf("PREPARE %s FROM @%s", stmtName, stmtStringName))
 	if err != nil {
-		return err
+		return wrap(err)
 	}
 
 	_, err = tx.Exec(fmt.Sprintf("EXECUTE %s", stmtName))
 	if err != nil {
-		return err
+		return wrap(err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return wrap(err)
+	}
+
+	return nil
 }
 
 // WriteCredentials implements DbADmin
@@ -122,14 +127,19 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 		quoted(password),
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to create new user %s: %w", username, err)
 	}
 
-	return mdba.indirectSubstitute(
+	err = mdba.indirectSubstitute(
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON %s.* TO %s",
 		noquote(mdba.database),
 		quoted(username),
 	)
+	if err != nil {
+		return fmt.Errorf("Unable to grant permission to new user %s: %w", username, wrap(err))
+	}
+
+	return nil
 }
 
 // ListUsernames implements DbADmin
@@ -139,7 +149,7 @@ func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error)
 		usernamePrefix+"%",
 	)
 	if err != nil {
-		return []string{}, err
+		return []string{}, fmt.Errorf("Unable to list existing usernames: %w", wrap(err))
 	}
 
 	var usernames []string
@@ -147,12 +157,12 @@ func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error)
 	for rows.Next() {
 		var username string
 		if err := rows.Scan(&username); err != nil {
-			return []string{}, err
+			return []string{}, fmt.Errorf("Unable to parse username from result: %w", wrap(err))
 		}
 		usernames = append(usernames, username)
 	}
 	if err := rows.Err(); err != nil {
-		return []string{}, err
+		return []string{}, fmt.Errorf("Result set contained an error: %w", wrap(err))
 	}
 
 	return usernames, nil
@@ -168,17 +178,22 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 	var sessionCount int
 	err := sessionCountRow.Scan(&sessionCount)
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to query or parse session count for user %s: %w", username, wrap(err))
 	}
 
 	if sessionCount > 0 {
-		return fmt.Errorf("Unable to remove user %s, %d active sessions remaining", username, sessionCount)
+		return xerrors.NewTempErrorf("Unable to remove user %s, %d active sessions remaining", username, sessionCount)
 	}
 
-	return mdba.indirectSubstitute(
+	err = mdba.indirectSubstitute(
 		"DROP USER %s",
 		quoted(username),
 	)
+	if err != nil {
+		return fmt.Errorf("Unable to remove user %s from the database: %w", username, err)
+	}
+
+	return nil
 }
 
 // GetSchemaVersion implements DbAdmin
@@ -192,7 +207,7 @@ func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
 			// No migration engine metadata, likely an empty database
 			return "", nil
 		}
-		return "", err
+		return "", wrap(err)
 	}
 
 	return version, nil

@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,7 +28,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 
 	mapset "github.com/deckarep/golang-set"
-	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,11 +40,14 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/alembic"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
+	"github.com/app-sre/dba-operator/pkg/xerrors"
 )
 
 // DBUsernamePrefix is the sequence that will be prepended to migration
 // specific database credentials when created in a managed database
 const DBUsernamePrefix = "dba_"
+
+var requeueAfterDelay = ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}
 
 // ManagedDatabaseController reconciles ManagedDatabase and DatabaseMigration objects
 type ManagedDatabaseController struct {
@@ -89,7 +92,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		}
 
 		log.Error(err, "unable to fetch ManagedDatabase")
-		return ctrl.Result{}, err
+		return handleError(ctx, c.Client, &db, log, err)
 	}
 
 	c.databaseLinks[db.SelfLink] = nil
@@ -99,13 +102,13 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
-		return ctrl.Result{}, err
+		return handleError(ctx, c.Client, &db, log, err)
 	}
 
 	currentDbVersion, err := admin.GetSchemaVersion()
 	if err != nil {
 		log.Error(err, "unable to retrieve database version")
-		return ctrl.Result{}, err
+		return handleError(ctx, c.Client, &db, log, err)
 	}
 	log.Info("Versions", "startVersion", currentDbVersion, "desiredVersion", db.Spec.DesiredSchemaVersion)
 
@@ -117,10 +120,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	for needVersion != currentDbVersion {
 		found, err := loadMigration(ctx, log, c.Client, db.Namespace, needVersion)
 		if err != nil {
-			notFound := errors.Wrapf(err, "Unable to find required migration: %s", needVersion)
-			log.Error(notFound, "Missing migration", "missingVersion", needVersion)
-			db.Status.Errors = append(db.Status.Errors, notFound.Error())
-			return ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}, notFound
+			return handleError(ctx, c.Client, &db, log, err)
 		}
 
 		migrationToRun = found
@@ -136,12 +136,18 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		}
 
 		if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
-			return ctrl.Result{}, err
+			return handleError(ctx, c.Client, &db, log, err)
 		}
 
 		if err := c.reconcileMigrationJob(oneMigration); err != nil {
-			return ctrl.Result{}, err
+			return handleError(ctx, c.Client, &db, log, err)
 		}
+	}
+
+	// Update the status block with the information that we've generated
+	if err := c.Status().Update(ctx, &db); err != nil {
+		log.Error(err, "Unable to update ManagedDatabase status block")
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
@@ -164,7 +170,7 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 	var jobsForDatabase batchv1.JobList
 	if err := c.List(oneMigration.ctx, &jobsForDatabase, client.InNamespace(oneMigration.db.Namespace), client.MatchingLabels(labelSelector)); err != nil {
 		oneMigration.log.Error(err, "unable to list migration Jobs")
-		return err
+		return fmt.Errorf("Unable to list existing migration Job(s): %w", err)
 	}
 
 	foundJob := false
@@ -184,7 +190,7 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 			oneMigration.log.Info("Cleaning up job for old migration", "oldMigrationName", job.Name)
 
 			if err := c.Client.Delete(oneMigration.ctx, &job); err != nil {
-				return err
+				return fmt.Errorf("Unable to delete migration job (%s): %w", job.Name, err)
 			}
 
 			// TODO: maybe write metrics here?
@@ -196,17 +202,17 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 		oneMigration.log.Info("Running migration", "currentVersion", oneMigration.version.Spec.Previous)
 		job, err := constructJobForMigration(oneMigration.db, oneMigration.version, oneMigration.db.Spec.Connection.DSNSecret)
 		if err != nil {
-			return err
+			return fmt.Errorf("Unable to create Job for migration (%s): %w", oneMigration.version.Name, err)
 		}
 
 		// Set the CR to own the new job
 		if err := ctrl.SetControllerReference(oneMigration.db, job, c.Scheme); err != nil {
-			return err
+			return fmt.Errorf("Unable to set owner for new job (%s): %w", job.Name, err)
 		}
 
 		if err := c.Create(oneMigration.ctx, job); err != nil {
-			oneMigration.log.Error(err, "unable to create Job for migration", "job", job)
-			return err
+			oneMigration.log.Error(err, "unable to create Job for migration", "job", job.Name)
+			return fmt.Errorf("Unable to create Job (%s) for migration: %w", job.Name, err)
 		}
 
 		c.metrics.MigrationJobsSpawned.Inc()
@@ -224,7 +230,7 @@ func loadMigration(ctx context.Context, log logr.Logger, apiClient client.Client
 	var version dba.DatabaseMigration
 	if err := apiClient.Get(ctx, path, &version); err != nil {
 		log.Error(err, "unable to fetch DatabaseMigration")
-		return nil, errors.Wrap(err, "unable to fetch DatabaseMigration")
+		return nil, fmt.Errorf("Unable to fetch DatabaseMigration (%s): %w", path, err)
 	}
 
 	return &version, nil
@@ -252,7 +258,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	// List the secrets in the system
 	secretList, err := listSecretsForDatabase(oneMigration.ctx, c.Client, oneMigration.db)
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to list existing cluster secrets: %w", err)
 	}
 
 	existingSecretSet := mapset.NewSet()
@@ -264,14 +270,14 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	secretsToRemove := existingSecretSet.Difference(secretNames)
 	for secretToRemove := range secretsToRemove.Iterator().C {
 		if err := deleteSecretIfUnused(oneMigration.ctx, oneMigration.log, c.Client, oneMigration.db.Namespace, secretToRemove.(string)); err != nil {
-			return err
+			return fmt.Errorf("Unable to delete secret: %w", err)
 		}
 	}
 
 	// List credentials in the database that match our namespace prefix
 	existingDbUsernames, err := admin.ListUsernames(DBUsernamePrefix)
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to list existing db usernames: %w", err)
 	}
 	oneMigration.log.Info("Found matching usernames", "numUsername", len(existingDbUsernames))
 
@@ -286,7 +292,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		dbUserToRemove := dbUserToRemoveItem.(string)
 		oneMigration.log.Info("Deprovisioning user account", "username", dbUserToRemove)
 		if err := admin.VerifyUnusedAndDeleteCredentials(dbUserToRemove); err != nil {
-			return err
+			return fmt.Errorf("Unable to delete user (%s) from db: %w", dbUserToRemove, err)
 		}
 		c.metrics.CredentialsRevoked.Inc()
 	}
@@ -298,13 +304,13 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		dbUserToAdd := dbUserToAddItem.(string)
 		newPassword, err := randPassword()
 		if err != nil {
-			return err
+			return fmt.Errorf("Unable to add user (%s) to db: %w", dbUserToAdd, err)
 		}
 
 		// Write the database user
 		oneMigration.log.Info("Provisioning user account", "username", dbUserToAdd)
 		if err := admin.WriteCredentials(dbUserToAdd, newPassword); err != nil {
-			return err
+			return fmt.Errorf("Unable to create new db user (%s): %w", dbUserToAdd, err)
 		}
 
 		// Write the corresponding secret
@@ -321,7 +327,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 			oneMigration.db,
 			c.Scheme,
 		); err != nil {
-			return err
+			return fmt.Errorf("Unable to write secret (%s) to cluster: %w", newSecretName, err)
 		}
 
 		c.metrics.CredentialsCreated.Inc()
@@ -354,7 +360,7 @@ func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Complete(reconcile.Func(c.ReconcileManagedDatabase))
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to finish operator setup: %w", err)
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -411,4 +417,25 @@ func getStandardLabels(db *dba.ManagedDatabase, migration *dba.DatabaseMigration
 		"database":      string(db.Name),
 		"database-uid":  string(db.UID),
 	}
+}
+
+func handleError(ctx context.Context, apiClient client.Client, db *dba.ManagedDatabase, log logr.Logger, err error) (finalResult ctrl.Result, finalError error) {
+	var maybeTemporary xerrors.EnhancedError
+
+	statusError := dba.ManagedDatabaseError{Message: err.Error(), Temporary: false}
+
+	if errors.As(err, &maybeTemporary) && maybeTemporary.Temporary() {
+		finalResult = requeueAfterDelay
+		finalError = err
+		statusError.Temporary = true
+	}
+
+	db.Status.Errors = append(db.Status.Errors, statusError)
+
+	if err := apiClient.Status().Update(ctx, db); err != nil {
+		log.Error(err, "Unable to update ManagedDatabase status block")
+		return ctrl.Result{}, err
+	}
+
+	return finalResult, finalError
 }
