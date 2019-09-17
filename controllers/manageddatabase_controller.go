@@ -358,6 +358,7 @@ func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
 		For(&dba.ManagedDatabase{}).
 		Owns(&batchv1.Job{}).
 		Owns(&corev1.Secret{}).
+		WithEventFilter(&ManagedDatabaseVersionChangedPredicate{}).
 		Complete(reconcile.Func(c.ReconcileManagedDatabase))
 	if err != nil {
 		return fmt.Errorf("Unable to finish operator setup: %w", err)

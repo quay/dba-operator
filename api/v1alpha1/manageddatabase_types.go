@@ -53,6 +53,7 @@ type ManagedDatabaseStatus struct {
 // +kubebuilder:object:root=true
 
 // ManagedDatabase is the Schema for the manageddatabases API
+// +kubebuilder:subresource:status
 type ManagedDatabase struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
