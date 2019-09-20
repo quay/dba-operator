@@ -15,7 +15,7 @@ SCRIPTS_DIR=$(dirname "${BASH_SOURCE[0]}")
 
 "${SCRIPTS_DIR}"/minikube.sh build-image
 
-make install # Install the genereated CRDs manifest in the cluster
+make install || true # Install the genereated CRDs manifest in the cluster
 make test-e2e-local # Run the tests
 
 "${SCRIPTS_DIR}"/minikube.sh delete-minikube

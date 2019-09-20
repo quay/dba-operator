@@ -1,7 +1,9 @@
+REPO?=quay.io/quay/dba-operator
+TAG?=$(shell git rev-parse --short HEAD)
 
 # Image URL to use all building/pushing image targets
 IMG ?= ${REPO}:${TAG}
-DB_IMG ?= mysql/mysqlserver:latest
+DB_IMG ?= mysql/mysql-server:latest
 
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd:trivialVersions=true"

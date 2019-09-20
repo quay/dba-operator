@@ -8,6 +8,9 @@ export MINIKUBE_VERSION=${MINIKUBE_VERSION:-v1.2.0}
 export KUBERNETES_VERSION=${KUBERNETES_VERSION:-v1.15.2}
 export KUBECONFIG=${KUBECONFIG:-$HOME/.kube/config}
 
+export REPO=${REPO:-quay.io/quay/dba-operator}
+export TAG=${TAG:-$(git rev-parse --short HEAD)}
+
 
 kubectl > /dev/null || { curl -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/$KUBERNETES_VERSION/bin/linux/amd64/kubectl && \
         chmod +x kubectl &&  \
@@ -18,6 +21,7 @@ minikube > /dev/null || { curl -Lo minikube https://storage.googleapis.com/minik
         sudo mv minikube /usr/local/bin/ ;}
 
 
+# Create a minikube instance
 minikube_create() {
     minikube version | awk '{ print $3 }' | grep -q "$MINIKUBE_VERSION" || { echo "Wrong minikube version"; exit 1; }
 
@@ -29,14 +33,16 @@ minikube_create() {
     kubectl config use-context minikube
 }
 
+# Delete the minikube instance
 minikube_delete() {
     minikube delete
 }
 
+# Build the operator image in the minikube's docker context
 build_image() {
     eval "$(minikube docker-env)" || { echo 'Cannot switch to minikube docker'; exit 1; }
-    make manager
-    docker build -f Dockerfile.e2e -t quay.io/quay/dba-operator:local .
+    GOOS=linux GOARCH=amd64 make manager
+    docker build -f Dockerfile.e2e -t $REPO:$TAG .
 }
 
 
