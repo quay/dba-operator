@@ -1,6 +1,8 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= ${REPO}:${TAG}
+DB_IMG ?= mysql/mysqlserver:latest
+
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd:trivialVersions=true"
 
@@ -16,6 +18,17 @@ all: manager
 # Run tests
 test: generate fmt vet manifests
 	go test ./api/... ./controllers/... -coverprofile cover.out
+
+# Run go test: e2e tests
+.PHONY: test-e2e-local
+test-e2e-local: KUBECONFIG?=$(HOME)/.kube/config
+test-e2e-local:
+	go test ./test/e2e/... --kubeconfig=${KUBECONFIG} --operator-image=${REPO}:${TAG} --db-image=${DB_IMG}
+
+# Run e2e tests: Setup/teardown minikube, build image and go test
+.PHONY: run-e2e-local
+run-e2e-local:
+	REPO=${REPO} TAG=${TAG} ./scripts/run-e2e-local.sh
 
 # Build manager binary
 manager: generate fmt vet
