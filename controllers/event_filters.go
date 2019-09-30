@@ -18,8 +18,9 @@ var _ predicate.Predicate = ManagedDatabaseVersionChangedPredicate{}
 // the spec field of an object.  This allows a controller to ignore update events where the spec is unchanged,
 // and only the metadata and/or status fields are changed.
 //
-// This predicate will skip update events that have no change in the object's metadata.generation field,
-// unless it is a ManagedDatabase, and its Status.CurrentVersion subresource changes.
+// This predicate will skip update events by a ManagedDatabase where its metadata.generation field is not changed,
+// unless its Status.CurrentVersion subresource changes. For other object types, update are sent on
+// ResourceVersion changes (default).
 type ManagedDatabaseVersionChangedPredicate struct {
 	predicate.Funcs
 }
@@ -42,23 +43,32 @@ func (ManagedDatabaseVersionChangedPredicate) Update(e event.UpdateEvent) bool {
 		log.Error(nil, "Update event has no new metadata", "event", e)
 		return false
 	}
+
+	oldMdb, ok := e.ObjectOld.(*dba.ManagedDatabase)
+	if !ok {
+		if e.MetaNew.GetResourceVersion() == e.MetaOld.GetResourceVersion() {
+			return false
+		}
+		return true
+	}
+
+	newMdb, ok := e.ObjectNew.(*dba.ManagedDatabase)
+	if !ok {
+		return false
+	}
+
 	// Check that the status subresource is enabled, and for currentVersion changes
 	// in the ManagedDatabase.
 	if e.MetaNew.GetGeneration() > 0 && e.MetaNew.GetGeneration() == e.MetaOld.GetGeneration() {
-		oldMdb, ok := e.ObjectOld.(*dba.ManagedDatabase)
-		if !ok {
-			return false
-		}
-
-		newMdb, ok := e.ObjectNew.(*dba.ManagedDatabase)
-		if !ok {
-			return false
-		}
-
 		if oldMdb.Status.CurrentVersion != newMdb.Status.CurrentVersion {
 			return true
 		}
 		return false
 	}
+
+	if e.MetaNew.GetResourceVersion() == e.MetaOld.GetResourceVersion() {
+		return false
+	}
+
 	return true
 }
