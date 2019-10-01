@@ -112,6 +112,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	}
 	log.Info("Versions", "startVersion", currentDbVersion, "desiredVersion", db.Spec.DesiredSchemaVersion)
 
+	db.Status.Errors = nil
 	db.Status.CurrentVersion = currentDbVersion
 
 	needVersion := db.Spec.DesiredSchemaVersion
