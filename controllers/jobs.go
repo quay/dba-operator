@@ -7,6 +7,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+var noRetries = int32(0)
+
 func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration, secretName string) (*batchv1.Job, error) {
 	name := migrationName(managedDatabase.Name, migration.Name)
 
@@ -43,6 +45,7 @@ func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *d
 					RestartPolicy: corev1.RestartPolicyNever,
 				},
 			},
+			BackoffLimit: &noRetries,
 		},
 	}
 
