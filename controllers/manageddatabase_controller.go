@@ -127,21 +127,27 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		needVersion = found.Spec.Previous
 	}
 
-	if migrationToRun != nil {
-		oneMigration := migrationContext{
-			ctx:     ctx,
-			log:     log.WithValues("migration", migrationToRun.Name),
-			db:      &db,
-			version: migrationToRun,
-		}
-
-		if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
+	if migrationToRun == nil {
+		// No need for a migration, reconcile with the version we have
+		migrationToRun, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
+		if err != nil {
 			return handleError(ctx, c.Client, &db, log, err)
 		}
+	}
 
-		if err := c.reconcileMigrationJob(oneMigration); err != nil {
-			return handleError(ctx, c.Client, &db, log, err)
-		}
+	oneMigration := migrationContext{
+		ctx:     ctx,
+		log:     log.WithValues("migration", migrationToRun.Name),
+		db:      &db,
+		version: migrationToRun,
+	}
+
+	if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
+		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	if err := c.reconcileMigrationJob(oneMigration); err != nil {
+		return handleError(ctx, c.Client, &db, log, err)
 	}
 
 	// Update the status block with the information that we've generated
