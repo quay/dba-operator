@@ -112,6 +112,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	}
 	log.Info("Versions", "startVersion", currentDbVersion, "desiredVersion", db.Spec.DesiredSchemaVersion)
 
+	db.Status.Errors = nil
 	db.Status.CurrentVersion = currentDbVersion
 
 	needVersion := db.Spec.DesiredSchemaVersion
@@ -127,21 +128,27 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		needVersion = found.Spec.Previous
 	}
 
-	if migrationToRun != nil {
-		oneMigration := migrationContext{
-			ctx:     ctx,
-			log:     log.WithValues("migration", migrationToRun.Name),
-			db:      &db,
-			version: migrationToRun,
-		}
-
-		if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
+	if migrationToRun == nil {
+		// No need for a migration, reconcile with the version we have
+		migrationToRun, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
+		if err != nil {
 			return handleError(ctx, c.Client, &db, log, err)
 		}
+	}
 
-		if err := c.reconcileMigrationJob(oneMigration); err != nil {
-			return handleError(ctx, c.Client, &db, log, err)
-		}
+	oneMigration := migrationContext{
+		ctx:     ctx,
+		log:     log.WithValues("migration", migrationToRun.Name),
+		db:      &db,
+		version: migrationToRun,
+	}
+
+	if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
+		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	if err := c.reconcileMigrationJob(oneMigration); err != nil {
+		return handleError(ctx, c.Client, &db, log, err)
 	}
 
 	// Update the status block with the information that we've generated
@@ -242,17 +249,26 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	// Compute the list of credentials that we need for this database version
 	secretNames := mapset.NewSet()
 	dbUsernames := mapset.NewSet()
+	secretNameForUsername := make(map[string]string)
+
+	desiredVersionNames := make([]string, 0, 2)
 
 	if currentDbVersion == oneMigration.version.Name {
 		// We have achieved the proper version, so the credentials for that
 		// version should be present/added
-		secretNames.Add(migrationName(oneMigration.db.Name, oneMigration.version.Name))
-		dbUsernames.Add(migrationDBUsername(oneMigration.version.Name))
+		desiredVersionNames = append(desiredVersionNames, oneMigration.version.Name)
 	}
 
 	if oneMigration.version.Spec.Previous != "" {
-		secretNames.Add(migrationName(oneMigration.db.Name, oneMigration.version.Spec.Previous))
-		dbUsernames.Add(migrationDBUsername(oneMigration.version.Spec.Previous))
+		desiredVersionNames = append(desiredVersionNames, oneMigration.version.Spec.Previous)
+	}
+
+	for _, desiredVersionName := range desiredVersionNames {
+		secretName := migrationName(oneMigration.db.Name, desiredVersionName)
+		dbUsername := migrationDBUsername(desiredVersionName)
+		secretNames.Add(secretName)
+		dbUsernames.Add(dbUsername)
+		secretNameForUsername[dbUsername] = secretName
 	}
 
 	// List the secrets in the system
@@ -269,6 +285,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	// Remove any secrets that shouldn't be there
 	secretsToRemove := existingSecretSet.Difference(secretNames)
 	for secretToRemove := range secretsToRemove.Iterator().C {
+		oneMigration.log.Info("Removing unneeded secret", "secretName", secretToRemove)
 		if err := deleteSecretIfUnused(oneMigration.ctx, oneMigration.log, c.Client, oneMigration.db.Namespace, secretToRemove.(string)); err != nil {
 			return fmt.Errorf("Unable to delete secret: %w", err)
 		}
@@ -279,7 +296,6 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	if err != nil {
 		return fmt.Errorf("Unable to list existing db usernames: %w", err)
 	}
-	oneMigration.log.Info("Found matching usernames", "numUsername", len(existingDbUsernames))
 
 	existingDbUsernamesSet := mapset.NewSet()
 	for _, username := range existingDbUsernames {
@@ -315,7 +331,8 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 
 		// Write the corresponding secret
 		secretLabels := getStandardLabels(oneMigration.db, oneMigration.version)
-		newSecretName := migrationName(oneMigration.db.Name, oneMigration.version.Name)
+		newSecretName := secretNameForUsername[dbUserToAdd]
+		oneMigration.log.Info("Provisioning secret for user account", "username", dbUserToAdd, "secretName", newSecretName)
 		if err := writeCredentialsSecret(
 			oneMigration.ctx,
 			c.Client,
