@@ -46,7 +46,7 @@ An estimate of the percentage of the total migration work that has been complete
 
 | Prometheus Type | Numerical Type | Values |
 |-----------------|----------------|-------:|
-| Gauge           | Binary Int     | 0, 1   |
+| Counter         | Binary Int     | 0, 1   |
 
 A signal on whether the job has completed (`1`) or not (`0`).
 
@@ -54,7 +54,7 @@ A signal on whether the job has completed (`1`) or not (`0`).
 
 | Prometheus Type | Numerical Type | Values |
 |-----------------|----------------|-------:|
-| Gauge           | Binary Int     | 0, 1   |
+| Counter         | Binary Int     | 0, 1   |
 
 A signal on whether the job has failed (`1`) or not (`0`).
 
