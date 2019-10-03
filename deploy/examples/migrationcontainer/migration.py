@@ -28,23 +28,23 @@ def run(db_connection_string, push_gateway_addr, job_id, labels, write_version,
     logger.debug('Starting migration')
     registry = CollectorRegistry()
 
-    completion_percent = Gauge(
-        'completion_percent',
+    migration_completion_percent = Gauge(
+        'migration_completion_percent',
         'Estimate of the completion percentage of the job',
         registry=registry,
     )
-    complete = Gauge(
-        'complete',
+    migration_complete_total = Counter(
+        'migration_complete_total',
         'Binary value of whether or not the job is complete',
         registry=registry,
     )
-    failed = Gauge(
-        'failed',
+    migration_failed_total = Counter(
+        'migration_failed_total',
         'Binary value of whether or not the job has failed',
         registry=registry,
     )
-    items_completed = Counter(
-        'items_completed',
+    migration_items_completed_total = Counter(
+        'migration_items_completed_total',
         'Number of items this migration has completed',
         registry=registry,
     )
@@ -53,23 +53,22 @@ def run(db_connection_string, push_gateway_addr, job_id, labels, write_version,
         push_to_gateway(push_gateway_addr, job=job_id, registry=registry,
                         grouping_key=labels)
 
-    failed.set(0)
     for i in range(run_seconds):
         if i >= fail_seconds:
-            failed.set(1)
+            migration_failed_total.inc()
             update_metrics()
             sys.exit(1)
 
-        items_completed.inc(1)
-        completion_percent.set(float(i)/run_seconds)
+        migration_items_completed_total.inc()
+        migration_completion_percent.set(float(i)/run_seconds)
         update_metrics()
         logger.debug('%s/%s items completed', i, run_seconds)
         time.sleep(1)
 
     # Write the completion to the database
     _write_database_version(db_connection_string, write_version)
-    complete.set(1)
-    completion_percent.set(1.0)
+    migration_complete_total.inc()
+    migration_completion_percent.set(1.0)
     update_metrics()
 
 
