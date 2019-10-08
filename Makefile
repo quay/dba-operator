@@ -21,6 +21,13 @@ test: generate fmt vet manifests
 manager: generate fmt vet
 	go build -o bin/manager main.go
 
+installapi:
+	kubectl apply -f deploy/databasemigration.yaml -f deploy/manageddatabase.yaml
+
+devenv: installapi
+	kubectl apply -f deploy/pushgateway.yaml
+	kubectl apply -f deploy/examples/
+
 # Run against the configured Kubernetes cluster in ~/.kube/config
 run: generate fmt vet
 	go run ./main.go
