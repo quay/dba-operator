@@ -2,6 +2,23 @@
 
 This project will provide a an interface for automating traditionally DBA managed aspects of using a relational database, e.g. migrations, access control, and health.
 
+## Development Environment
+
+### Pre-requisities
+
+1. This project is based off of [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) so it and all of it's dependencies must be installed using the kubebuilder [installation instructions](https://book.kubebuilder.io/quick-start.html#installation).
+1. Access to a local kubernetes cluster ([minikube](https://github.com/kubernetes/minikube), [docker for mac](https://docs.docker.com/docker-for-mac/install/)) with the `KUBECFG` env var set properly.
+1. [kubefwd](https://github.com/txn2/kubefwd) to get access to services running on cluster and to use stable service names from the dev env and cluster.
+
+### Dev environment
+
+```sh
+make devenv
+sudo kubefwd svc -n default
+docker build -t quay.io/quaymigrations/test deploy/examples/migrationcontainer/
+make run
+```
+
 ## Design
 
 This project will use the operator pattern, and a set of requirements about defining and packaging schema migrations, data migrations, and user access.
