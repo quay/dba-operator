@@ -8,6 +8,7 @@ import (
 )
 
 var noRetries = int32(0)
+var secretNotOptional = false
 
 func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration) (*batchv1.Job, error) {
 	name := migrationName(managedDatabase.Name, migration.Name)
@@ -48,6 +49,31 @@ func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *d
 			},
 			BackoffLimit: &noRetries,
 		},
+	}
+
+	// If the migraction container requires extra config, mount the config
+	// secret as a volume
+	migrationConfig := managedDatabase.Spec.MigrationContainerConfig
+	if migrationConfig != nil {
+		volumeName := migrationConfig.VolumeMount.Name
+		volume := corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: migrationConfig.Secret,
+					Optional:   &secretNotOptional,
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, volume)
+
+		var mount corev1.VolumeMount
+		migrationConfig.VolumeMount.DeepCopyInto(&mount)
+		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+			job.Spec.Template.Spec.Containers[0].VolumeMounts,
+			mount,
+		)
 	}
 
 	// TODO figure out a policy for adding annotations and labels
