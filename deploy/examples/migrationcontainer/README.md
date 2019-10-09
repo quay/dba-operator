@@ -22,12 +22,23 @@ Labels that should be added as groupings to the prometheus job. Migration
 containers should truncate the prefix `DBA_OP_LABEL_` and lower case any
 remainder before setting the grouping.
 
+### DBA_OP_CONNECTION_ENGINE
+
+The engine (e.g. mysql, postgres) to use for connecting to the database with the
+specified DSN.
+
 ### DBA_OP_CONNECTION_STRING
 
-A database connection string that contains the username, password, hostname, port,
+A golang database DSN that often contains the username, password, hostname, port,
 and logical database schema, e.g.:
 
-`<engine>://<username>:<password>@<hostname>:<port>/<dbname>`
+#### MySQL Example Connection String
+
+`username:password@tcp(hostname:port)/dbname`
+
+#### PostgreSQL Example Connection String
+
+`postgres://username:password@hostname:port/dbname`
 
 ## Prometheus Metrics
 

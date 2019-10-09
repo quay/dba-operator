@@ -22,6 +22,7 @@ func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *d
 		Optional:             &falseBool,
 	}}
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_CONNECTION_STRING", ValueFrom: csSource})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_CONNECTION_ENGINE", Value: managedDatabase.Spec.Connection.Engine})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_JOB_ID", Value: name})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR", Value: "prom-pushgateway:9091"})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_LABEL_DATABASE", Value: managedDatabase.Name})
