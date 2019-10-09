@@ -9,7 +9,7 @@ import (
 
 var noRetries = int32(0)
 
-func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration, secretName string) (*batchv1.Job, error) {
+func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration) (*batchv1.Job, error) {
 	name := migrationName(managedDatabase.Name, migration.Name)
 
 	var containerSpec corev1.Container
@@ -17,7 +17,7 @@ func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *d
 
 	falseBool := false
 	csSource := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-		LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+		LocalObjectReference: corev1.LocalObjectReference{Name: managedDatabase.Spec.Connection.DSNSecret},
 		Key:                  "dsn",
 		Optional:             &falseBool,
 	}}
