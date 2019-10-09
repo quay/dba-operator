@@ -29,6 +29,9 @@ type DbAdmin interface {
 
 	// GetTableSizeEstimates will return the estimated number of rows in the
 	// specified tables.
+	//
+	// If a table does not exist, the map will contain the value zero for that
+	// table.
 	GetTableSizeEstimates(tableNames []TableName) (map[TableName]uint64, error)
 
 	// GetNextIDs will return the next ID that will be assigned to a new row in
@@ -38,7 +41,53 @@ type DbAdmin interface {
 	// SelectFloat will select a single value out of a single row and return
 	// only that value as a float.
 	SelectFloat(selectQuery string) (float64, error)
+
+	// IsBlockingIndexCreation will determine whether adding an index to the
+	// specified table will cause writes to
+	IsBlockingIndexCreation(tableName TableName, indexType IndexType, columns ...string) (bool, error)
+
+	// AddConstraintWillFail returns true if adding the constraint will fail due
+	// to the data itself.
+	ConstraintWillFail(tableName TableName, constraintType ConstraintType, columns ...string) (bool, error)
 }
+
+// IndexType defines the varioues types of indexes we will evaluate for being
+// applied to the database
+type IndexType int
+
+const (
+	// Index is a regular single column or compound index.
+	Index IndexType = iota
+
+	// PrimaryKeyIndex is an index that is unique and implicitly applied on
+	// primary key fields.
+	PrimaryKeyIndex
+
+	// UniqueIndex indexes enforce that rows contain unique values for the
+	// indexed column(s). Null values are considered as non-matching and can be
+	// present and repeated.
+	UniqueIndex
+
+	// FulltextIndex indexes aid in the process of full-text searching.
+	FulltextIndex
+
+	// SpatialIndex indexes represent multi-dimensional location based data.
+	SpatialIndex
+)
+
+// ConstraintType defines the various types of constraints we can evaluate for
+// being applied to a database.
+type ConstraintType int
+
+const (
+	// NotNullConstraint guarantees that a column will not contain any `NULL`
+	// values
+	NotNullConstraint ConstraintType = iota
+
+	// UniqueConstraint requires that all rows in a column have unique values
+	// over the columns specified.
+	UniqueConstraint
+)
 
 // MigrationEngine is an interface for deciphering the bookkeeping information
 // stored by a particular migration framework from within a database

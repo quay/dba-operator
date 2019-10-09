@@ -30,6 +30,17 @@ type ManagedDatabaseSpec struct {
 	MigrationEngine          string                    `json:"migrationEngine,omitempty"`
 	MigrationContainerConfig *MigrationContainerConfig `json:"migrationContainerConfig,omitempty"`
 	ExportDataMetrics        *DataMetrics              `json:"exportDataMetrics,omitempty"`
+	HintsEngine              *HintsEngineConfig        `json:"hintsEngine,omitempty"`
+}
+
+// HintsEngineConfig defines the values that can be passed to the hints engine
+// to help it understand context under which this manageddatabase runs that
+// can't be queried from the database directly.
+type HintsEngineConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+
+	// +kubebuilder:validation:Minimum=1
+	LargeTableRowsThreshold uint64 `json:"largetableRowsThreshold,omitempty"`
 }
 
 // DataMetrics declares what information the DBA operator should expose from the

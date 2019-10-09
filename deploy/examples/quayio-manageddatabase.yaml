@@ -8,3 +8,6 @@ spec:
     dsnSecret: quayiocreds
   migrationEngine: alembic
   desiredSchemaVersion: v3
+  hintsEngine:
+    enabled: true
+    largetableRowsThreshold: 1000000
