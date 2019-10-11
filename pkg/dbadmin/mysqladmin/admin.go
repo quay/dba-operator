@@ -212,3 +212,8 @@ func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
 
 	return version, nil
 }
+
+// Close implements DbADmin
+func (mdba *MySQLDbAdmin) Close() error {
+	return mdba.handle.Close()
+}
