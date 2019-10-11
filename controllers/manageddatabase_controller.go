@@ -213,7 +213,7 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 	if !foundJob {
 		// Start the migration
 		oneMigration.log.Info("Running migration", "currentVersion", oneMigration.version.Spec.Previous)
-		job, err := constructJobForMigration(oneMigration.db, oneMigration.version, oneMigration.db.Spec.Connection.DSNSecret)
+		job, err := constructJobForMigration(oneMigration.db, oneMigration.version)
 		if err != nil {
 			return fmt.Errorf("Unable to create Job for migration (%s): %w", oneMigration.version.Name, err)
 		}

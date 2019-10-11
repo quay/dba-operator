@@ -8,8 +8,9 @@ import (
 )
 
 var noRetries = int32(0)
+var secretNotOptional = false
 
-func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration, secretName string) (*batchv1.Job, error) {
+func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *dba.DatabaseMigration) (*batchv1.Job, error) {
 	name := migrationName(managedDatabase.Name, migration.Name)
 
 	var containerSpec corev1.Container
@@ -17,11 +18,12 @@ func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *d
 
 	falseBool := false
 	csSource := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-		LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+		LocalObjectReference: corev1.LocalObjectReference{Name: managedDatabase.Spec.Connection.DSNSecret},
 		Key:                  "dsn",
 		Optional:             &falseBool,
 	}}
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_CONNECTION_STRING", ValueFrom: csSource})
+	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_CONNECTION_ENGINE", Value: managedDatabase.Spec.Connection.Engine})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_JOB_ID", Value: name})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR", Value: "prom-pushgateway:9091"})
 	containerSpec.Env = append(containerSpec.Env, corev1.EnvVar{Name: "DBA_OP_LABEL_DATABASE", Value: managedDatabase.Name})
@@ -47,6 +49,31 @@ func constructJobForMigration(managedDatabase *dba.ManagedDatabase, migration *d
 			},
 			BackoffLimit: &noRetries,
 		},
+	}
+
+	// If the migraction container requires extra config, mount the config
+	// secret as a volume
+	migrationConfig := managedDatabase.Spec.MigrationContainerConfig
+	if migrationConfig != nil {
+		volumeName := migrationConfig.VolumeMount.Name
+		volume := corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: migrationConfig.Secret,
+					Optional:   &secretNotOptional,
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, volume)
+
+		var mount corev1.VolumeMount
+		migrationConfig.VolumeMount.DeepCopyInto(&mount)
+		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(
+			job.Spec.Template.Spec.Containers[0].VolumeMounts,
+			mount,
+		)
 	}
 
 	// TODO figure out a policy for adding annotations and labels

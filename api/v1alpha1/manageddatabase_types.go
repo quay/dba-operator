@@ -16,6 +16,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,9 +25,10 @@ import (
 
 // ManagedDatabaseSpec defines the desired state of ManagedDatabase
 type ManagedDatabaseSpec struct {
-	DesiredSchemaVersion string                 `json:"desiredSchemaVersion,omitempty"`
-	Connection           DatabaseConnectionInfo `json:"connection,omitempty"`
-	MigrationEngine      string                 `json:"migrationEngine,omitempty"`
+	DesiredSchemaVersion     string                    `json:"desiredSchemaVersion,omitempty"`
+	Connection               DatabaseConnectionInfo    `json:"connection,omitempty"`
+	MigrationEngine          string                    `json:"migrationEngine,omitempty"`
+	MigrationContainerConfig *MigrationContainerConfig `json:"migrationContainerConfig,omitempty"`
 }
 
 // DatabaseConnectionInfo defines engine specific connection parameters to establish
@@ -34,6 +36,14 @@ type ManagedDatabaseSpec struct {
 type DatabaseConnectionInfo struct {
 	Engine    string `json:"engine,omitempty"`
 	DSNSecret string `json:"dsnSecret,omitempty"`
+}
+
+// MigrationContainerConfig defines extra configuration that a migration
+// container may require before it is able to run. Specify a secret name
+// and how to bind that into the container.
+type MigrationContainerConfig struct {
+	Secret      string             `json:"secret,omitempty"`
+	VolumeMount corev1.VolumeMount `json:"volumeMount,omitempty"`
 }
 
 // ManagedDatabaseError contains information about an error that occurred when
