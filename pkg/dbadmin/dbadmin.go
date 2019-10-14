@@ -19,6 +19,9 @@ type DbAdmin interface {
 	// GetSchemaVersion will return the current version of the database, usually
 	// as decoded by a MigrationEngine instance.
 	GetSchemaVersion() (string, error)
+
+	// Close the connection.
+	Close() error
 }
 
 // MigrationEngine is an interface for deciphering the bookkeeping information
