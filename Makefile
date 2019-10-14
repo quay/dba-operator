@@ -1,4 +1,3 @@
-
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
@@ -12,6 +11,9 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 all: manager
+
+lint:
+	golangci-lint -v run
 
 # Run tests
 test: generate fmt vet manifests

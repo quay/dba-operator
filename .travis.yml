@@ -1,0 +1,14 @@
+language: go
+go:
+- 1.13
+
+sudo: false
+
+before_install:
+- curl -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/v1.16.1/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl $GOPATH/bin
+- curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $GOPATH/bin v1.20.0
+- curl -sL https://github.com/kubernetes-sigs/kubebuilder/releases/download/v2.0.1/kubebuilder_2.0.1_linux_amd64.tar.gz | tar -xz -C /tmp/ && cp /tmp/kubebuilder_2.0.1_linux_amd64/bin/* $GOPATH/bin/
+- export KUBEBUILDER_ASSETS=$GOPATH/bin
+
+script:
+- make lint && make test
