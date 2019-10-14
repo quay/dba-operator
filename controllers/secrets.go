@@ -94,7 +94,7 @@ func writeCredentialsSecret(
 
 	// TODO figure out a policy for adding annotations and labels
 
-	ctrl.SetControllerReference(owner, &newSecret, scheme)
+	_ = ctrl.SetControllerReference(owner, &newSecret, scheme)
 
 	return apiClient.Create(ctx, &newSecret)
 }
