@@ -99,12 +99,12 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
 	admin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, &db.Spec)
-	defer admin.Close()
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
 		return handleError(ctx, c.Client, &db, log, err)
 	}
+	defer admin.Close()
 
 	currentDbVersion, err := admin.GetSchemaVersion()
 	if err != nil {
