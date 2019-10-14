@@ -74,7 +74,7 @@ func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) xe
 	if err != nil {
 		return wrap(err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() // nolint: errcheck
 
 	finalArgs := make([]interface{}, 0, len(args))
 	for _, arg := range args {

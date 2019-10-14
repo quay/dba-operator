@@ -1,4 +1,3 @@
-
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
@@ -13,12 +12,15 @@ endif
 
 all: manager
 
+lint: vet
+	golangci-lint -v run
+
 # Run tests
-test: generate fmt vet manifests
+test: generate manifests
 	go test ./api/... ./controllers/... -coverprofile cover.out
 
 # Build manager binary
-manager: generate fmt vet
+manager: generate
 	go build -o bin/manager main.go
 
 installapi:
@@ -29,7 +31,7 @@ devenv: installapi
 	kubectl apply -f deploy/examples/
 
 # Run against the configured Kubernetes cluster in ~/.kube/config
-run: generate fmt vet
+run: generate
 	go run ./main.go
 
 # Install CRDs into a cluster
