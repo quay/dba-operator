@@ -43,6 +43,7 @@ type DatabaseMigrationStatus struct {
 // +kubebuilder:object:root=true
 
 // DatabaseMigration is the Schema for the databasemigrations API
+// +kubebuilder:resource:scope="Namespaced"
 type DatabaseMigration struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
