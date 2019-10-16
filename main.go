@@ -25,6 +25,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
 	// +kubebuilder:scaffold:imports
 
 	dbaoperatorv1alpha1 "github.com/app-sre/dba-operator/api/v1alpha1"
@@ -65,18 +66,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	controller, metricsToRegister := controllers.NewManagedDatabaseController(
+	controller := controllers.NewManagedDatabaseController(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		ctrl.Log.WithName("controllers").WithName("ManagedDatabase"),
+		metrics.Registry,
 	)
 	if err = controller.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedDatabase")
 		os.Exit(1)
-	}
-
-	for _, metric := range metricsToRegister {
-		metrics.Registry.MustRegister(metric)
 	}
 	// +kubebuilder:scaffold:builder
 
