@@ -55,12 +55,13 @@ type ManagedDatabaseController struct {
 	Log           logr.Logger
 	Scheme        *runtime.Scheme
 	metrics       ManagedDatabaseControllerMetrics
+	promRegistry  *prometheus.Registry
 	databaseLinks map[string]interface{}
 }
 
 // NewManagedDatabaseController will instantiate a ManagedDatabaseController
 // with the supplied arguments and logical defaults.
-func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) (*ManagedDatabaseController, []prometheus.Collector) {
+func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger, promRegistry *prometheus.Registry) *ManagedDatabaseController {
 	metrics := generateManagedDatabaseControllerMetrics()
 
 	return &ManagedDatabaseController{
@@ -68,8 +69,9 @@ func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l log
 		Scheme:        scheme,
 		Log:           l,
 		metrics:       metrics,
+		promRegistry:  promRegistry,
 		databaseLinks: make(map[string]interface{}),
-	}, getAllMetrics(metrics)
+	}
 }
 
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases;databasemigrations,verbs=get;list;watch;create;update;patch;delete
@@ -378,6 +380,13 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 // SetupWithManager should be called to finish initialization of a
 // ManagedDatbaseController and bind it to the manager specified.
 func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
+	// Registr all static metrics with the registry
+	for _, collector := range getAllMetrics(c.metrics) {
+		if err := c.promRegistry.Register(collector); err != nil {
+			return fmt.Errorf("Unable to registry metrics for operator: %w", err)
+		}
+	}
+
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&dba.ManagedDatabase{}).
 		Owns(&batchv1.Job{}).
