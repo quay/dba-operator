@@ -2,6 +2,7 @@ package dbadmin
 
 import "io"
 
+// TableName is an alias for string to make function signatures more expressive
 type TableName string
 
 // DbAdmin contains the methods that are used to introspect runtime state
@@ -26,6 +27,17 @@ type DbAdmin interface {
 	// as decoded by a MigrationEngine instance.
 	GetSchemaVersion() (string, error)
 
+	// GetTableSizeEstimates will return the estimated number of rows in the
+	// specified tables.
+	GetTableSizeEstimates(tableNames []TableName) (map[TableName]uint64, error)
+
+	// GetNextIDs will return the next ID that will be assigned to a new row in
+	// the specified tables.
+	GetNextIDs(tableNames []TableName) (map[TableName]uint64, error)
+
+	// SelectFloat will select a single value out of a single row and return
+	// only that value as a float.
+	SelectFloat(selectQuery string) (float64, error)
 }
 
 // MigrationEngine is an interface for deciphering the bookkeeping information

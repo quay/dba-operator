@@ -196,7 +196,82 @@ func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
 	return version, nil
 }
 
-// Close implements DbADmin
+// GetTableSizeEstimates implements DbAdmin
+func (mdba *MySQLDbAdmin) GetTableSizeEstimates(tableNames []dbadmin.TableName) (map[dbadmin.TableName]uint64, error) {
+	estimates := make(map[dbadmin.TableName]uint64)
+
+	if len(tableNames) == 0 {
+		return estimates, nil
+	}
+
+	query, args, err := sqlx.In("SELECT TABLE_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN (?);", tableNames)
+	if err != nil {
+		return estimates, fmt.Errorf("Unable to prepare query to load table size estimates: %w", err)
+	}
+	query = mdba.handle.Rebind(query)
+
+	var results []struct {
+		TableName string `db:"TABLE_NAME"`
+		TableRows uint64 `db:"TABLE_ROWS"`
+	}
+	if err := mdba.handle.Select(&results, query, args...); err != nil {
+		return estimates, fmt.Errorf("Unable to load table size estimates: %w", err)
+	}
+
+	if len(tableNames) != len(results) {
+		return estimates, fmt.Errorf("Unable to load table estimates for all tables, expected %d, got %d", len(tableNames), len(results))
+	}
+
+	for _, result := range results {
+		estimates[dbadmin.TableName(result.TableName)] = result.TableRows
+	}
+
+	return estimates, nil
+}
+
+// GetNextIDs implements DbAdmin
+func (mdba *MySQLDbAdmin) GetNextIDs(tableNames []dbadmin.TableName) (map[dbadmin.TableName]uint64, error) {
+	nextIDs := make(map[dbadmin.TableName]uint64)
+
+	if len(tableNames) == 0 {
+		return nextIDs, nil
+	}
+
+	query, args, err := sqlx.In("SELECT TABLE_NAME, AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN (?);", tableNames)
+	if err != nil {
+		return nextIDs, fmt.Errorf("Unable to prepare query to load table size nextIDs: %w", err)
+	}
+	query = mdba.handle.Rebind(query)
+
+	var results []struct {
+		TableName     string `db:"TABLE_NAME"`
+		AutoIncrement uint64 `db:"AUTO_INCREMENT"`
+	}
+	if err := mdba.handle.Select(&results, query, args...); err != nil {
+		return nextIDs, fmt.Errorf("Unable to load table nextIDs: %w", err)
+	}
+
+	if len(tableNames) != len(results) {
+		return nextIDs, fmt.Errorf("Unable to load table nextIDs for all tables, expected %d, got %d", len(tableNames), len(results))
+	}
+
+	for _, result := range results {
+		nextIDs[dbadmin.TableName(result.TableName)] = result.AutoIncrement
+	}
+
+	return nextIDs, nil
+}
+
+// SelectFloat implements DbAdmin
+func (mdba *MySQLDbAdmin) SelectFloat(selectQuery string) (result float64, _ error) {
+	if err := mdba.handle.Get(&result, selectQuery); err != nil {
+		return result, fmt.Errorf("Unable to select float value from the database: %w", err)
+	}
+
+	return result, nil
+}
+
+// Close implements DbAdmin
 func (mdba *MySQLDbAdmin) Close() error {
 	return mdba.handle.Close()
 }
