@@ -1,8 +1,14 @@
 package dbadmin
 
+import "io"
+
+type TableName string
+
 // DbAdmin contains the methods that are used to introspect runtime state
 // and control access to a database
 type DbAdmin interface {
+	io.Closer
+
 	// WriteCredentials will add a username to the database with the given password
 	WriteCredentials(username, password string) error
 
@@ -20,8 +26,6 @@ type DbAdmin interface {
 	// as decoded by a MigrationEngine instance.
 	GetSchemaVersion() (string, error)
 
-	// Close the connection.
-	Close() error
 }
 
 // MigrationEngine is an interface for deciphering the bookkeeping information
