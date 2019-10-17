@@ -1,13 +1,13 @@
 package mysqladmin
 
 import (
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
 
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/xerrors"
@@ -15,7 +15,7 @@ import (
 
 // MySQLDbAdmin is a type which implements DbAdmin for MySQL databases
 type MySQLDbAdmin struct {
-	handle   *sql.DB
+	handle   *sqlx.DB
 	database string
 	engine   dbadmin.MigrationEngine
 }
@@ -47,7 +47,7 @@ func CreateMySQLAdmin(dsn string, engine dbadmin.MigrationEngine) (dbadmin.DbAdm
 		return nil, errors.New("Must provide specific database name in the connection DSN")
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sqlx.Connect("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to open connection to db: %w", wrap(err))
 	}
@@ -144,25 +144,13 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 
 // ListUsernames implements DbADmin
 func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error) {
-	rows, err := mdba.handle.Query(
+	var usernames []string
+	if err := mdba.handle.Select(
+		&usernames,
 		"SELECT user FROM mysql.user WHERE user LIKE ?",
 		usernamePrefix+"%",
-	)
-	if err != nil {
+	); err != nil {
 		return []string{}, fmt.Errorf("Unable to list existing usernames: %w", wrap(err))
-	}
-
-	var usernames []string
-	defer rows.Close()
-	for rows.Next() {
-		var username string
-		if err := rows.Scan(&username); err != nil {
-			return []string{}, fmt.Errorf("Unable to parse username from result: %w", wrap(err))
-		}
-		usernames = append(usernames, username)
-	}
-	if err := rows.Err(); err != nil {
-		return []string{}, fmt.Errorf("Result set contained an error: %w", wrap(err))
 	}
 
 	return usernames, nil
@@ -170,14 +158,12 @@ func (mdba *MySQLDbAdmin) ListUsernames(usernamePrefix string) ([]string, error)
 
 // VerifyUnusedAndDeleteCredentials implements DbAdmin
 func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) error {
-	sessionCountRow := mdba.handle.QueryRow(
+	var sessionCount int
+	if err := mdba.handle.Get(
+		&sessionCount,
 		"SELECT COUNT(*) FROM information_schema.processlist WHERE user = ?",
 		username,
-	)
-
-	var sessionCount int
-	err := sessionCountRow.Scan(&sessionCount)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("Unable to query or parse session count for user %s: %w", username, wrap(err))
 	}
 
@@ -185,11 +171,10 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 		return xerrors.NewTempErrorf("Unable to remove user %s, %d active sessions remaining", username, sessionCount)
 	}
 
-	err = mdba.indirectSubstitute(
+	if err := mdba.indirectSubstitute(
 		"DROP USER %s",
 		quoted(username),
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("Unable to remove user %s from the database: %w", username, err)
 	}
 
@@ -198,10 +183,8 @@ func (mdba *MySQLDbAdmin) VerifyUnusedAndDeleteCredentials(username string) erro
 
 // GetSchemaVersion implements DbAdmin
 func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
-	versionRow := mdba.handle.QueryRow(mdba.engine.GetVersionQuery())
-
 	var version string
-	if err := versionRow.Scan(&version); err != nil {
+	if err := mdba.handle.Get(&version, mdba.engine.GetVersionQuery()); err != nil {
 		mysqlErr, ok := err.(*mysql.MySQLError)
 		if ok && mysqlErr.Number == 1146 {
 			// No migration engine metadata, likely an empty database
