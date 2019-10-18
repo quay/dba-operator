@@ -52,24 +52,28 @@ var requeueAfterDelay = ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Secon
 // ManagedDatabaseController reconciles ManagedDatabase and DatabaseMigration objects
 type ManagedDatabaseController struct {
 	client.Client
-	Log           logr.Logger
-	Scheme        *runtime.Scheme
-	metrics       ManagedDatabaseControllerMetrics
-	databaseLinks map[string]interface{}
+	Log                       logr.Logger
+	Scheme                    *runtime.Scheme
+	metrics                   ManagedDatabaseControllerMetrics
+	promRegistry              *prometheus.Registry
+	databaseLinks             map[string]interface{}
+	databaseMetricsCollectors map[string]CollectorCloser
 }
 
 // NewManagedDatabaseController will instantiate a ManagedDatabaseController
 // with the supplied arguments and logical defaults.
-func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger) (*ManagedDatabaseController, []prometheus.Collector) {
+func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger, promRegistry *prometheus.Registry) *ManagedDatabaseController {
 	metrics := generateManagedDatabaseControllerMetrics()
 
 	return &ManagedDatabaseController{
-		Client:        c,
-		Scheme:        scheme,
-		Log:           l,
-		metrics:       metrics,
-		databaseLinks: make(map[string]interface{}),
-	}, getAllMetrics(metrics)
+		Client:                    c,
+		Scheme:                    scheme,
+		Log:                       l,
+		metrics:                   metrics,
+		promRegistry:              promRegistry,
+		databaseLinks:             make(map[string]interface{}),
+		databaseMetricsCollectors: make(map[string]CollectorCloser),
+	}
 }
 
 // +kubebuilder:rbac:groups=dbaoperator.app-sre.redhat.com,resources=manageddatabases;databasemigrations,verbs=get;list;watch;create;update;patch;delete
@@ -86,6 +90,15 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	if err := c.Get(ctx, req.NamespacedName, &db); err != nil {
 		if apierrs.IsNotFound(err) {
 			delete(c.databaseLinks, db.SelfLink)
+
+			if collector, ok := c.databaseMetricsCollectors[db.SelfLink]; ok {
+				c.promRegistry.Unregister(collector)
+				if err := collector.Close(); err != nil {
+					log.Error(err, "Unable to close the metrics collector.")
+				}
+				delete(c.databaseMetricsCollectors, db.SelfLink)
+			}
+
 			c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
 			return ctrl.Result{}, nil
@@ -98,13 +111,28 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	c.databaseLinks[db.SelfLink] = nil
 	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
+	metricsAdmin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, &db.Spec)
+	if err != nil {
+		log.Error(err, "unable to create database connection")
+
+		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	if err := c.reconcileMetricsCollectors(metricsAdmin, log, &db); err != nil {
+		return handleError(ctx, c.Client, &db, log, err)
+	}
+
 	admin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, &db.Spec)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
 		return handleError(ctx, c.Client, &db, log, err)
 	}
-	defer admin.Close()
+	defer func() {
+		if err := admin.Close(); err != nil {
+			log.Error(err, "Unable to close the database admin connection.")
+		}
+	}()
 
 	currentDbVersion, err := admin.GetSchemaVersion()
 	if err != nil {
@@ -166,6 +194,25 @@ type migrationContext struct {
 	log     logr.Logger
 	db      *dba.ManagedDatabase
 	version *dba.DatabaseMigration
+}
+
+func (c *ManagedDatabaseController) reconcileMetricsCollectors(admin dbadmin.DbAdmin, log logr.Logger, db *dba.ManagedDatabase) error {
+	log.Info("Reconciling metrics collectors")
+	if collector, ok := c.databaseMetricsCollectors[db.SelfLink]; ok {
+		c.promRegistry.Unregister(collector)
+		if err := collector.Close(); err != nil {
+			log.Error(err, "Unable to close the metrics collector.")
+		}
+		delete(c.databaseMetricsCollectors, db.SelfLink)
+	}
+
+	newCollector := NewDatabaseMetricsCollector(admin, db.Name, log, db.Spec.ExportDataMetrics)
+	if err := c.promRegistry.Register(newCollector); err != nil {
+		return fmt.Errorf("Unable to register database metrics collector: %w", err)
+	}
+	c.databaseMetricsCollectors[db.SelfLink] = newCollector
+
+	return nil
 }
 
 func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migrationContext) error {
@@ -378,6 +425,13 @@ func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request)
 // SetupWithManager should be called to finish initialization of a
 // ManagedDatbaseController and bind it to the manager specified.
 func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
+	// Register all static metrics with the registry
+	for _, collector := range getAllMetrics(c.metrics) {
+		if err := c.promRegistry.Register(collector); err != nil {
+			return fmt.Errorf("Unable to registry metrics for operator: %w", err)
+		}
+	}
+
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&dba.ManagedDatabase{}).
 		Owns(&batchv1.Job{}).

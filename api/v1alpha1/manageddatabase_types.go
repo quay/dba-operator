@@ -29,12 +29,51 @@ type ManagedDatabaseSpec struct {
 	Connection               DatabaseConnectionInfo    `json:"connection,omitempty"`
 	MigrationEngine          string                    `json:"migrationEngine,omitempty"`
 	MigrationContainerConfig *MigrationContainerConfig `json:"migrationContainerConfig,omitempty"`
+	ExportDataMetrics        *DataMetrics              `json:"exportDataMetrics,omitempty"`
+}
+
+// DataMetrics declares what information the DBA operator should expose from the
+// database under management
+type DataMetrics struct {
+	TableEstimatedSize *[]TableReference `json:"tableEstimatedSize,omitempty"`
+	TableNextID        *[]TableReference `json:"tableNextID,omitempty"`
+	SQLQuery           *[]SQLQueryMetric `json:"sqlQuery,omitempty"`
+}
+
+// TableReference refers to a DB table by name
+type TableReference struct {
+	TableName string `json:"tableName,omitempty"`
+}
+
+// SQLQueryMetric describes a SQL query to run against the database and how to
+// expose it as a metric. It must select exactly one value in one row, and the
+// value must represent either a counter (uint) or gauge (float).
+type SQLQueryMetric struct {
+	// +kubebuilder:validation:Pattern="SELECT [^;]+;"
+	Query string `json:"query,omitempty"`
+
+	PrometheusMetric PrometheusMetricExporter `json:"prometheusMetric,omitempty"`
+}
+
+// PrometheusMetricExporter describes how a given value should be exported.
+type PrometheusMetricExporter struct {
+	// +kubebuilder:validation:Enum=counter;gauge
+	ValueType string `json:"valueType,omitempty"`
+
+	// +kubebuilder:validation:database_[a-z_]+[a-z]
+	Name string `json:"name,omitempty"`
+
+	HelpString  string            `json:"helpString,omitempty"`
+	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
 }
 
 // DatabaseConnectionInfo defines engine specific connection parameters to establish
 // a connection to the database.
 type DatabaseConnectionInfo struct {
-	Engine    string `json:"engine,omitempty"`
+	// +kubebuilder:validation:Enum=mysql
+	Engine string `json:"engine,omitempty"`
+
+	// +kubebuilder:validation:MinLength=1
 	DSNSecret string `json:"dsnSecret,omitempty"`
 }
 
