@@ -157,19 +157,21 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		needVersion = found.Spec.Previous
 	}
 
-	if migrationToRun == nil {
+	var currentVersionMigration *dba.DatabaseMigration
+	if currentDbVersion != "" {
 		// No need for a migration, reconcile with the version we have
-		migrationToRun, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
+		currentVersionMigration, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
 		if err != nil {
 			return handleError(ctx, c.Client, &db, log, err)
 		}
 	}
 
 	oneMigration := migrationContext{
-		ctx:     ctx,
-		log:     log.WithValues("migration", migrationToRun.Name),
-		db:      &db,
-		version: migrationToRun,
+		ctx:           ctx,
+		log:           log.WithValues("migration", migrationToRun.Name),
+		db:            &db,
+		activeVersion: currentVersionMigration,
+		nextVersion:   migrationToRun,
 	}
 
 	if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
@@ -190,10 +192,11 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 }
 
 type migrationContext struct {
-	ctx     context.Context
-	log     logr.Logger
-	db      *dba.ManagedDatabase
-	version *dba.DatabaseMigration
+	ctx           context.Context
+	log           logr.Logger
+	db            *dba.ManagedDatabase
+	activeVersion *dba.DatabaseMigration
+	nextVersion   *dba.DatabaseMigration
 }
 
 func (c *ManagedDatabaseController) reconcileMetricsCollectors(admin dbadmin.DbAdmin, log logr.Logger, db *dba.ManagedDatabase) error {
@@ -228,12 +231,16 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 		return fmt.Errorf("Unable to list existing migration Job(s): %w", err)
 	}
 
-	foundJob := false
+	neededJobsRunning := make(map[string]*dba.DatabaseMigration)
+	if oneMigration.nextVersion != nil {
+		neededJobsRunning[string(oneMigration.nextVersion.UID)] = oneMigration.nextVersion
+	}
+
 	for _, job := range jobsForDatabase.Items {
-		if job.Labels["migration-uid"] == string(oneMigration.version.UID) {
+		_, ok := neededJobsRunning[job.Labels["migration-uid"]]
+		if ok {
 			// This is the job for the migration in question
 			oneMigration.log.Info("Found matching migration job")
-			foundJob = true
 
 			if job.Status.Succeeded > 0 {
 				oneMigration.log.Info("Migration job is complete")
@@ -256,14 +263,16 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 
 			// TODO: maybe write metrics here?
 		}
+
+		delete(neededJobsRunning, job.Labels["migration-uid"])
 	}
 
-	if !foundJob {
+	for _, migration := range neededJobsRunning {
 		// Start the migration
-		oneMigration.log.Info("Running migration", "currentVersion", oneMigration.version.Spec.Previous)
-		job, err := constructJobForMigration(oneMigration.db, oneMigration.version)
+		oneMigration.log.Info("Running migration", "currentVersion", migration.Spec.Previous)
+		job, err := constructJobForMigration(oneMigration.db, migration)
 		if err != nil {
-			return fmt.Errorf("Unable to create Job for migration (%s): %w", oneMigration.version.Name, err)
+			return fmt.Errorf("Unable to create Job for migration (%s): %w", migration.Name, err)
 		}
 
 		// Set the CR to own the new job
@@ -307,14 +316,15 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 
 	desiredVersionNames := make([]string, 0, 2)
 
-	if currentDbVersion == oneMigration.version.Name {
-		// We have achieved the proper version, so the credentials for that
-		// version should be present/added
-		desiredVersionNames = append(desiredVersionNames, oneMigration.version.Name)
-	}
+	if oneMigration.activeVersion != nil {
+		// The credentials for the currently active version must be available
+		desiredVersionNames = append(desiredVersionNames, oneMigration.activeVersion.Name)
 
-	if oneMigration.version.Spec.Previous != "" {
-		desiredVersionNames = append(desiredVersionNames, oneMigration.version.Spec.Previous)
+		// If we are not going to attempt a migration, the previous version
+		// credentials should also be preserved
+		if oneMigration.activeVersion.Spec.Previous != "" && oneMigration.nextVersion != nil {
+			desiredVersionNames = append(desiredVersionNames, oneMigration.activeVersion.Spec.Previous)
+		}
 	}
 
 	for _, desiredVersionName := range desiredVersionNames {
@@ -384,7 +394,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		}
 
 		// Write the corresponding secret
-		secretLabels := getStandardLabels(oneMigration.db, oneMigration.version)
+		secretLabels := getStandardLabels(oneMigration.db, oneMigration.activeVersion)
 		newSecretName := secretNameForUsername[dbUserToAdd]
 		oneMigration.log.Info("Provisioning secret for user account", "username", dbUserToAdd, "secretName", newSecretName)
 		if err := writeCredentialsSecret(
