@@ -25,40 +25,40 @@ This project will use the operator pattern, and a set of requirements about defi
 
 ### Interface
 
-* CRD called AppDatabaseMigration
-  * DSL for migration to add "new" schema
+* CRD called DatabaseMigration
   * Reference to a backfill/data migration container
     * Define allowable parallelism for migration container
-  * Name of secret under which credentials will be published 
-  * Link to the AppDatabaseMigration being deprecated?
+  * Reference to the name of the previous DatabaseMigration that is being deprecated
+  * A set of hints about what the migration container will do to the database schema
 * CRD called ManagedDatabase
   * Reference to a secret which contains admin credentials
-  * Connection URI
   * Desired schema version
+  * Config for how the migration will signal its completion in the database
+    * e.g. alembic writes a value to a table called `alembic_version`
+  * Descriptions of the data metrics that the operator should harvest and publish from the managed DB.
 
 ### Flow
 
-1. Developer proposes a schema change
-  1. If modeled in peewee, scaffolding proposes the AppDatabaseMigration with the schema migrations pre-filled
-  1. Developer can optionally hand-write the AppDatabaseMigration
-1. Developer writes the data migration code and packages it as a container
-  1. Progress must conform to the progress interface (e.g. progress varz)
-1. Developer generates versions of the app which use the credentials named in the AppDatabaseMigration and use the schema at the corresponding migration versions
-1. Operator loads the AppDatabaseMigration into a cluster
+1. Developer creates a migration container conforming to the [migration container spec](deploy/examples/migrationcontainer/README.md)
+1. Developer creates a DatabaseMigration that describes and references the migraiton container
+  1. For some applications (e.g. Quay) there is tooling to generate this from the migration itself
+1. Developer generates versions of the app which use the schema and credentials at the corresponding migration version
+1. Operator loads the DatabaseMigration into a cluster
 1. Operator updates the desired database schema version in the ManagedDatabase CR
 
 ### Operator Control Loop
 
+1. Read and publish metrics from the ManagedDatabase CR
 1. Check if database schema version matches the desired version
   1. If newer, run through all required migration loops until version matches desired
 
 #### Migration Loop
 
 1. Verify that credentials from 2-migrations ago are unused
-  1. Drop credentials from 2-migrations ago
-  1. Ensures that the code which is incompatible with the change we're about to make is no longer accessing the database
-1. Run database schema migration if specified
-1. Run data backfill migration if specified
+  1. Ensures that the code which is incompatible with the change we're about to make is no longer accessing the database using a published secret
+  1. Ensure there are no existing connections using the credentials about to be dropped
+1. Drop credentials from 2-migrations ago
+1. Run database migration if required
 1. Generate and add credentials for accessing the database from this migration version 
   1. Write secret containing the password that was generated
 
@@ -69,12 +69,13 @@ and running database metadata.
 
 1. Applying a blocking index creation to a table that is large
 1. Applying a blocking index creation to a table that has heavy writes
-1. Adding a column to a table that is large
+1. Adding a column to a table that is large ✔
 1. Adding a column to a table that has heavy writes
+1. Adding a unique constraint to a table which has non-unique values ✔
 1. Adding a constraint to a column on a table that is large
 1. Adding a constraint to a column on a table that has heavy writes
-1. Making a column non-null when the database existing nulls
-1. Adding a non-null column without providing a server default on a table that already has data
+1. Making a column non-null when the database existing nulls ✔
+1. Adding a non-null column without providing a server default on a table that already has data ✔
 
 ### FAQs
 
