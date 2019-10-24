@@ -11,10 +11,10 @@ spec:
   schemaHints:
   - operation: addColumn
     table: image
-    type: int
-  - operation: addIndex
+    columns:
+    - name: anintcolumn
+  - operation: createIndex
     table: image
-    column: storage
-    unique: false
-    foreignKey: true
-    nullable: true
+    columns:
+    - name: storage
+    indexType: index
