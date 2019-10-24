@@ -40,6 +40,7 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/alembic"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
+	"github.com/app-sre/dba-operator/pkg/hints"
 	"github.com/app-sre/dba-operator/pkg/xerrors"
 )
 
@@ -176,6 +177,24 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 
 	if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
 		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	hintsEngine := hints.NewHintsEngine(admin, oneMigration.db.Spec.HintsEngine.LargeTableRowsThreshold)
+	migrationErrors, err := hintsEngine.ProcessHints(migrationToRun.Spec.SchemaHints)
+	if err != nil {
+		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	if len(migrationErrors) > 0 {
+		log.Info("Migration would cause errors against running database, canceling", "migration", oneMigration.nextVersion.Name)
+		oneMigration.nextVersion = nil
+
+		db.Status.Errors = migrationErrors
+		if err := c.Client.Status().Update(ctx, &db); err != nil {
+			log.Error(err, "Unable to update ManagedDatabase status block")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if err := c.reconcileMigrationJob(oneMigration); err != nil {
