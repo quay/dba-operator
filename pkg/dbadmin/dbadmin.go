@@ -91,6 +91,8 @@ const (
 	UniqueConstraint
 )
 
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 . MigrationEngine
+
 // MigrationEngine is an interface for deciphering the bookkeeping information
 // stored by a particular migration framework from within a database
 type MigrationEngine interface {

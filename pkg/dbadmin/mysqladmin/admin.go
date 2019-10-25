@@ -138,7 +138,7 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 		quoted(username),
 	)
 	if err != nil {
-		return fmt.Errorf("Unable to grant permission to new user %s: %w", username, wrap(err))
+		return fmt.Errorf("Unable to grant permission to new user %s: %w", username, err)
 	}
 
 	return nil

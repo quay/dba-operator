@@ -3,6 +3,7 @@ module github.com/app-sre/dba-operator
 go 1.13
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.3.3
 	github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 // indirect
 	github.com/alecthomas/units v0.0.0-20190717042225-c3de453c63f4 // indirect
 	github.com/deckarep/golang-set v1.7.1
