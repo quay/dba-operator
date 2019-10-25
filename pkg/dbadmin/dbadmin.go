@@ -5,6 +5,8 @@ import "io"
 // TableName is an alias for string to make function signatures more expressive
 type TableName string
 
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 . DbAdmin
+
 // DbAdmin contains the methods that are used to introspect runtime state
 // and control access to a database
 type DbAdmin interface {
