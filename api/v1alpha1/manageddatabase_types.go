@@ -111,6 +111,7 @@ type ManagedDatabaseStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 
 // ManagedDatabase is the Schema for the manageddatabases API
 type ManagedDatabase struct {
