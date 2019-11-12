@@ -1,0 +1,107 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+  name: dba-operator-v0.1.0
+spec:
+  description: This operator automates some of the work that a Database Administrator (DBA) would do to keep a specific database instance healthy.
+  displayName: DBA Operator
+  keywords:
+  - database
+  maintainers:
+  - email: jmoshenk@redhat.com
+    name: Jake Moshenko
+  - email: jimi@redhat.com
+    name: Jimmy Zelinskie
+  maturity: alpha
+  provider:
+    name: Red Hat App-SRE Team
+    url: https://github.com/app-sre
+  version: 0.1.0
+
+  installModes:
+  - supported: true
+    type: AllNamespaces
+
+  install:
+    strategy: deployment
+    spec:
+      clusterPermissions:
+      - serviceAccountName: dba-operator
+        rules:
+        # DBA operator reads secrets as part of setup, and creates/deletes secrets to gate DB access
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - '*'
+        # DBA operator iterates pods to see if a secret is in use
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - get
+          - list
+        # DBA operator manages jobs to perform the migrations
+        - apiGroups:
+          - batch
+          resources:
+          - jobs
+          verbs:
+          - '*'
+        # DBA operator has its own set of CRDs that define the interactions with it
+        - apiGroups:
+          - dbaoperator.app-sre.redhat.com
+          resources:
+          - databasemigrations
+          - manageddatabases
+          verbs:
+          - '*'
+        # The DBA operator CRDs have status subresources that must be managed
+        - apiGroups:
+          - dbaoperator.app-sre.redhat.com
+          resources:
+          - manageddatabases/status
+          verbs:
+          - get
+          - patch
+          - update
+      deployments:
+      - name: dba-operator
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: dba-operator
+          template:
+            metadata:
+              labels:
+                app: dba-operator
+            spec:
+              containers:
+              - name: dba-operator
+                image: quay.io/quay/dba-operator:v0.1.0
+                ports:
+                - containerPort: 8080
+
+  customresourcedefinitions:
+    owned:
+    - name: databasemigrations.dbaoperator.app-sre.redhat.com
+      version: v1alpha1
+      kind: DatabaseMigration
+    - name: manageddatabases.dbaoperator.app-sre.redhat.com
+      version: v1alpha1
+      kind: ManagedDatabase
+  
+  nativeAPIs:
+  - group: ""
+    version: v1
+    kind: Pod
+  - group: ""
+    version: v1
+    kind: Secret
+  - group: batch
+    version: v1
+    kind: Job
