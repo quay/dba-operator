@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: dba-operator
-        image: quay.io/app-sre/dba-operator:v0.1
+        image: quay.io/quay/dba-operator:v0.1.0
         ports:
         - containerPort: 8080
 ---
