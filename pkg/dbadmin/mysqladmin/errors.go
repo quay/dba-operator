@@ -53,6 +53,10 @@ func wrap(err error) xerrors.EnhancedError {
 	return nil
 }
 
+func (err wrappedMySQLError) Unwrap() error {
+	return err.error
+}
+
 // Temporary implements the EnhancedError interface
 func (err wrappedMySQLError) Temporary() bool {
 	switch err.error {

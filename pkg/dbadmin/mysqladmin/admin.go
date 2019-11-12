@@ -1,11 +1,13 @@
 package mysqladmin
 
 import (
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
 
+	mapset "github.com/deckarep/golang-set"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 
@@ -136,7 +138,7 @@ func (mdba *MySQLDbAdmin) WriteCredentials(username, password string) error {
 		quoted(username),
 	)
 	if err != nil {
-		return fmt.Errorf("Unable to grant permission to new user %s: %w", username, wrap(err))
+		return fmt.Errorf("Unable to grant permission to new user %s: %w", username, err)
 	}
 
 	return nil
@@ -200,6 +202,11 @@ func (mdba *MySQLDbAdmin) GetSchemaVersion() (string, error) {
 func (mdba *MySQLDbAdmin) GetTableSizeEstimates(tableNames []dbadmin.TableName) (map[dbadmin.TableName]uint64, error) {
 	estimates := make(map[dbadmin.TableName]uint64)
 
+	// Pre-allocate the map with zeroes for each table
+	for _, tableName := range tableNames {
+		estimates[tableName] = 0
+	}
+
 	if len(tableNames) == 0 {
 		return estimates, nil
 	}
@@ -215,11 +222,7 @@ func (mdba *MySQLDbAdmin) GetTableSizeEstimates(tableNames []dbadmin.TableName) 
 		TableRows uint64 `db:"TABLE_ROWS"`
 	}
 	if err := mdba.handle.Select(&results, query, args...); err != nil {
-		return estimates, fmt.Errorf("Unable to load table size estimates: %w", err)
-	}
-
-	if len(tableNames) != len(results) {
-		return estimates, fmt.Errorf("Unable to load table estimates for all tables, expected %d, got %d", len(tableNames), len(results))
+		return estimates, wrap(err)
 	}
 
 	for _, result := range results {
@@ -248,7 +251,7 @@ func (mdba *MySQLDbAdmin) GetNextIDs(tableNames []dbadmin.TableName) (map[dbadmi
 		AutoIncrement uint64 `db:"AUTO_INCREMENT"`
 	}
 	if err := mdba.handle.Select(&results, query, args...); err != nil {
-		return nextIDs, fmt.Errorf("Unable to load table nextIDs: %w", err)
+		return nextIDs, wrap(err)
 	}
 
 	if len(tableNames) != len(results) {
@@ -265,10 +268,122 @@ func (mdba *MySQLDbAdmin) GetNextIDs(tableNames []dbadmin.TableName) (map[dbadmi
 // SelectFloat implements DbAdmin
 func (mdba *MySQLDbAdmin) SelectFloat(selectQuery string) (result float64, _ error) {
 	if err := mdba.handle.Get(&result, selectQuery); err != nil {
-		return result, fmt.Errorf("Unable to select float value from the database: %w", err)
+		return result, wrap(err)
 	}
 
 	return result, nil
+}
+
+// IsBlockingIndexCreation implements DbAdmin
+func (mdba *MySQLDbAdmin) IsBlockingIndexCreation(tableName dbadmin.TableName, indexType dbadmin.IndexType, columns ...string) (bool, error) {
+	return false, fmt.Errorf("Not implemented")
+}
+
+// ConstraintWillFail implements DbAdmin
+func (mdba *MySQLDbAdmin) ConstraintWillFail(tableName dbadmin.TableName, constraintType dbadmin.ConstraintType, columns ...string) (bool, error) {
+	switch constraintType {
+	case dbadmin.NotNullConstraint:
+		// Find out if the table already has a not null constraint on all of the named columns
+		query, args, err := sqlx.In("SHOW COLUMNS FROM `?` WHERE Field IN (?);", tableName, columns)
+		if err != nil {
+			return true, fmt.Errorf("Unable to prepare query to read table definition: %w", err)
+		}
+		query = mdba.handle.Rebind(query)
+
+		var fieldDefinitions []struct {
+			Field string
+			Type  string
+			Null  string
+		}
+		if err := mdba.handle.Select(&fieldDefinitions, query, args...); err != nil {
+			return true, wrap(err)
+		}
+
+		fieldNullableMap := make(map[string]string, len(fieldDefinitions))
+		for _, fieldDefinition := range fieldDefinitions {
+			fieldNullableMap[fieldDefinition.Field] = fieldDefinition.Null
+		}
+
+		for _, columnToCheck := range columns {
+			definition, ok := fieldNullableMap[columnToCheck]
+			if !ok {
+				// Will definitely fail because the column doesn't exist
+				return true, nil
+			}
+
+			if definition == "YES" {
+				// The table currently allows for nulls in the column, and we're
+				// trying to make it not nullable. Check if there are any nulls
+				// in that column.
+				query := "SELECT * FROM `?` WHERE `?` NOT NULL LIMIT 1;"
+				_, err := mdba.handle.QueryRowx(query, tableName, columnToCheck).SliceScan()
+				if err != sql.ErrNoRows {
+					if err != nil {
+						return true, wrap(err)
+					}
+
+					// A value was returned, meaning there are null rows in this column
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	case dbadmin.UniqueConstraint:
+		listUniqueIndexQuery := "SHOW INDEX FROM `?` WHERE Non_unique = 0;"
+
+		var uniqueIndexRows []struct {
+			KeyName    string `db:"Key_name"`
+			ColumnName string `db:"Column_name"`
+		}
+		if err := mdba.handle.Select(&uniqueIndexRows, listUniqueIndexQuery, tableName); err != nil {
+			return true, wrap(err)
+		}
+
+		columnsByIndex := make(map[string]mapset.Set)
+		for _, uniqueIndexRow := range uniqueIndexRows {
+			indexColumnSet, ok := columnsByIndex[uniqueIndexRow.KeyName]
+			if !ok {
+				indexColumnSet = mapset.NewSet()
+				columnsByIndex[uniqueIndexRow.KeyName] = indexColumnSet
+			}
+
+			indexColumnSet.Add(uniqueIndexRow.ColumnName)
+		}
+
+		newConstraintColumnSet := mapset.NewSet()
+		for _, columnName := range columns {
+			newConstraintColumnSet.Add(columnName)
+		}
+		for _, existingIndexColumnSet := range columnsByIndex {
+			if existingIndexColumnSet.Equal(newConstraintColumnSet) {
+				// We can add this constraint because there is already a unique
+				// index over the same columns
+				return false, nil
+			}
+		}
+
+		// There is no existing index, we must check if there is some value in
+		// the database which violates the constraint
+		query, args, err := sqlx.In("SELECT COUNT(*) FROM `?` GROUP BY ? HAVING COUNT(*) > 1 LIMIT 1;", tableName, columns)
+		if err != nil {
+			return true, fmt.Errorf("Unable to prepare query to search for duplicate data: %w", err)
+		}
+		query = mdba.handle.Rebind(query)
+
+		_, err = mdba.handle.QueryRowx(query, args...).SliceScan()
+		if err != sql.ErrNoRows {
+			if err != nil {
+				return true, wrap(err)
+			}
+
+			// A value was returned, meaning there are duplicate rows
+			return true, nil
+		}
+
+		return false, nil
+	default:
+		return false, fmt.Errorf("Unknown constraint type: %d", constraintType)
+	}
 }
 
 // Close implements DbAdmin

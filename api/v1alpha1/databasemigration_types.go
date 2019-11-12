@@ -23,17 +23,35 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// DatabaseMigrationSchemaHintColumn contains information about one column
+// being added to a table, or in a table definition
+type DatabaseMigrationSchemaHintColumn struct {
+	Name             string `json:"name,omitempty"`
+	NotNullable      bool   `json:"notNullable,omitempty"`
+	HasServerDefault bool   `json:"hasServerDefault,omitempty"`
+}
+
 // DatabaseMigrationSchemaHint approximately describes what the migration is going to change
 type DatabaseMigrationSchemaHint struct {
-	Name string `json:"name,omitempty"`
+	TableReference `json:",omitempty"`
+
+	// +kubebuilder:validation:Enum=addColumn;createTable;createIndex;alterColumn
+	Operation string `json:"operation,omitempty"`
+
+	Columns []DatabaseMigrationSchemaHintColumn `json:"columns,omitempty"`
+
+	// +kubebuilder:validation:Enum=index;unique;fulltext
+	IndexType string `json:"indexType,omitempty"`
 }
 
 // DatabaseMigrationSpec defines the desired state of DatabaseMigration
 type DatabaseMigrationSpec struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=12
 	Previous               string                        `json:"previous,omitempty"`
 	MigrationContainerSpec corev1.Container              `json:"migrationContainerSpec,omitempty"`
 	Scalable               bool                          `json:"scalable,omitempty"`
-	SchemaHints            []DatabaseMigrationSchemaHint `json:"schemaHints"`
+	SchemaHints            []DatabaseMigrationSchemaHint `json:"schemaHints,omitempty"`
 }
 
 // DatabaseMigrationStatus defines the observed state of DatabaseMigration

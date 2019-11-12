@@ -17,7 +17,7 @@ lint: vet
 
 # Run tests
 test: generate manifests
-	go test ./api/... ./controllers/... -coverprofile cover.out
+	go test ./api/... ./controllers/... ./pkg/... -coverprofile cover.out
 
 # Build manager binary
 manager: generate
@@ -58,6 +58,7 @@ vet:
 # Generate code
 generate: controller-gen
 	$(CONTROLLER_GEN) object:headerFile=./hack/boilerplate.go.txt paths=./api/...
+	go generate ./...
 
 # Build the docker image
 docker-build: test

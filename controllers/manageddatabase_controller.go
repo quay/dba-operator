@@ -40,6 +40,7 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/alembic"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
+	"github.com/app-sre/dba-operator/pkg/hints"
 	"github.com/app-sre/dba-operator/pkg/xerrors"
 )
 
@@ -58,12 +59,27 @@ type ManagedDatabaseController struct {
 	promRegistry              *prometheus.Registry
 	databaseLinks             map[string]interface{}
 	databaseMetricsCollectors map[string]CollectorCloser
+	initializeAdminConnection func(string, string, string) (dbadmin.DbAdmin, error)
 }
 
 // NewManagedDatabaseController will instantiate a ManagedDatabaseController
 // with the supplied arguments and logical defaults.
 func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger, promRegistry *prometheus.Registry) *ManagedDatabaseController {
 	metrics := generateManagedDatabaseControllerMetrics()
+
+	dbInitializer := func(dsn, migrationEngineType, databaseType string) (dbadmin.DbAdmin, error) {
+		var migrationEngine dbadmin.MigrationEngine
+		switch migrationEngineType {
+		case "alembic":
+			migrationEngine = alembic.CreateMigrationEngine()
+		}
+
+		switch databaseType {
+		case "mysql":
+			return mysqladmin.CreateMySQLAdmin(dsn, migrationEngine)
+		}
+		return nil, fmt.Errorf("Unknown database engine: %s", databaseType)
+	}
 
 	return &ManagedDatabaseController{
 		Client:                    c,
@@ -73,6 +89,7 @@ func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l log
 		promRegistry:              promRegistry,
 		databaseLinks:             make(map[string]interface{}),
 		databaseMetricsCollectors: make(map[string]CollectorCloser),
+		initializeAdminConnection: dbInitializer,
 	}
 }
 
@@ -107,11 +124,22 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		log.Error(err, "unable to fetch ManagedDatabase")
 		return handleError(ctx, c.Client, &db, log, err)
 	}
+	db.Status.Errors = nil
 
 	c.databaseLinks[db.SelfLink] = nil
 	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
 
-	metricsAdmin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, &db.Spec)
+	dsnSecretName := types.NamespacedName{Namespace: db.Namespace, Name: db.Spec.Connection.DSNSecret}
+
+	var credsSecret corev1.Secret
+	if err := c.Get(ctx, dsnSecretName, &credsSecret); err != nil {
+		log.Error(err, "unable to fetch credentials secret")
+		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	dsn := string(credsSecret.Data["dsn"])
+
+	metricsAdmin, err := c.initializeAdminConnection(dsn, db.Spec.MigrationEngine, db.Spec.Connection.Engine)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
@@ -122,7 +150,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		return handleError(ctx, c.Client, &db, log, err)
 	}
 
-	admin, err := initializeAdminConnection(ctx, log, c.Client, req.Namespace, &db.Spec)
+	admin, err := c.initializeAdminConnection(dsn, db.Spec.MigrationEngine, db.Spec.Connection.Engine)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
@@ -141,7 +169,6 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	}
 	log.Info("Versions", "startVersion", currentDbVersion, "desiredVersion", db.Spec.DesiredSchemaVersion)
 
-	db.Status.Errors = nil
 	db.Status.CurrentVersion = currentDbVersion
 
 	needVersion := db.Spec.DesiredSchemaVersion
@@ -157,23 +184,53 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		needVersion = found.Spec.Previous
 	}
 
-	if migrationToRun == nil {
+	var currentVersionMigration *dba.DatabaseMigration
+	if currentDbVersion != "" {
 		// No need for a migration, reconcile with the version we have
-		migrationToRun, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
+		currentVersionMigration, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
 		if err != nil {
 			return handleError(ctx, c.Client, &db, log, err)
 		}
 	}
 
+	migrationLog := log
+	if migrationToRun != nil {
+		migrationLog = migrationLog.WithValues("nextVersion", migrationToRun.Name)
+	}
+	if currentVersionMigration != nil {
+		migrationLog = migrationLog.WithValues("activeVersion", currentVersionMigration.Name)
+	}
+
 	oneMigration := migrationContext{
-		ctx:     ctx,
-		log:     log.WithValues("migration", migrationToRun.Name),
-		db:      &db,
-		version: migrationToRun,
+		ctx:           ctx,
+		log:           migrationLog,
+		db:            &db,
+		activeVersion: currentVersionMigration,
+		nextVersion:   migrationToRun,
 	}
 
 	if err := c.reconcileCredentialsForVersion(oneMigration, admin, currentDbVersion); err != nil {
 		return handleError(ctx, c.Client, &db, log, err)
+	}
+
+	if oneMigration.nextVersion != nil && oneMigration.db.Spec.HintsEngine != nil && oneMigration.db.Spec.HintsEngine.Enabled {
+		hintsEngine := hints.NewHintsEngine(admin, oneMigration.db.Spec.HintsEngine.LargeTableRowsThreshold)
+		migrationErrors, err := hintsEngine.ProcessHints(oneMigration.nextVersion.Spec.SchemaHints)
+		if err != nil {
+			return handleError(ctx, c.Client, &db, log, err)
+		}
+
+		if len(migrationErrors) > 0 {
+			log.Info("Migration would cause errors against running database, canceling", "migration", oneMigration.nextVersion.Name)
+			oneMigration.nextVersion = nil
+
+			db.Status.Errors = append(db.Status.Errors, migrationErrors...)
+			if err := c.Client.Status().Update(ctx, &db); err != nil {
+				log.Error(err, "Unable to update ManagedDatabase status block")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
 	}
 
 	if err := c.reconcileMigrationJob(oneMigration); err != nil {
@@ -190,10 +247,11 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 }
 
 type migrationContext struct {
-	ctx     context.Context
-	log     logr.Logger
-	db      *dba.ManagedDatabase
-	version *dba.DatabaseMigration
+	ctx           context.Context
+	log           logr.Logger
+	db            *dba.ManagedDatabase
+	activeVersion *dba.DatabaseMigration
+	nextVersion   *dba.DatabaseMigration
 }
 
 func (c *ManagedDatabaseController) reconcileMetricsCollectors(admin dbadmin.DbAdmin, log logr.Logger, db *dba.ManagedDatabase) error {
@@ -228,12 +286,16 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 		return fmt.Errorf("Unable to list existing migration Job(s): %w", err)
 	}
 
-	foundJob := false
+	neededJobsRunning := make(map[string]*dba.DatabaseMigration)
+	if oneMigration.nextVersion != nil {
+		neededJobsRunning[string(oneMigration.nextVersion.UID)] = oneMigration.nextVersion
+	}
+
 	for _, job := range jobsForDatabase.Items {
-		if job.Labels["migration-uid"] == string(oneMigration.version.UID) {
+		_, ok := neededJobsRunning[job.Labels["migration-uid"]]
+		if ok {
 			// This is the job for the migration in question
 			oneMigration.log.Info("Found matching migration job")
-			foundJob = true
 
 			if job.Status.Succeeded > 0 {
 				oneMigration.log.Info("Migration job is complete")
@@ -256,14 +318,16 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 
 			// TODO: maybe write metrics here?
 		}
+
+		delete(neededJobsRunning, job.Labels["migration-uid"])
 	}
 
-	if !foundJob {
+	for _, migration := range neededJobsRunning {
 		// Start the migration
-		oneMigration.log.Info("Running migration", "currentVersion", oneMigration.version.Spec.Previous)
-		job, err := constructJobForMigration(oneMigration.db, oneMigration.version)
+		oneMigration.log.Info("Running migration", "currentVersion", migration.Spec.Previous)
+		job, err := constructJobForMigration(oneMigration.db, migration)
 		if err != nil {
-			return fmt.Errorf("Unable to create Job for migration (%s): %w", oneMigration.version.Name, err)
+			return fmt.Errorf("Unable to create Job for migration (%s): %w", migration.Name, err)
 		}
 
 		// Set the CR to own the new job
@@ -307,14 +371,15 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 
 	desiredVersionNames := make([]string, 0, 2)
 
-	if currentDbVersion == oneMigration.version.Name {
-		// We have achieved the proper version, so the credentials for that
-		// version should be present/added
-		desiredVersionNames = append(desiredVersionNames, oneMigration.version.Name)
-	}
+	if oneMigration.activeVersion != nil {
+		// The credentials for the currently active version must be available
+		desiredVersionNames = append(desiredVersionNames, oneMigration.activeVersion.Name)
 
-	if oneMigration.version.Spec.Previous != "" {
-		desiredVersionNames = append(desiredVersionNames, oneMigration.version.Spec.Previous)
+		// If we are not going to attempt a migration, the previous version
+		// credentials should also be preserved
+		if oneMigration.activeVersion.Spec.Previous != "" && oneMigration.nextVersion == nil {
+			desiredVersionNames = append(desiredVersionNames, oneMigration.activeVersion.Spec.Previous)
+		}
 	}
 
 	for _, desiredVersionName := range desiredVersionNames {
@@ -384,7 +449,7 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		}
 
 		// Write the corresponding secret
-		secretLabels := getStandardLabels(oneMigration.db, oneMigration.version)
+		secretLabels := getStandardLabels(oneMigration.db, oneMigration.activeVersion)
 		newSecretName := secretNameForUsername[dbUserToAdd]
 		oneMigration.log.Info("Provisioning secret for user account", "username", dbUserToAdd, "secretName", newSecretName)
 		if err := writeCredentialsSecret(
@@ -444,31 +509,6 @@ func (c *ManagedDatabaseController) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&dba.DatabaseMigration{}).
 		Complete(reconcile.Func(c.ReconcileDatabaseMigration))
-}
-
-func initializeAdminConnection(ctx context.Context, log logr.Logger, apiClient client.Client, namespace string, dbSpec *dba.ManagedDatabaseSpec) (dbadmin.DbAdmin, error) {
-
-	secretName := types.NamespacedName{Namespace: namespace, Name: dbSpec.Connection.DSNSecret}
-
-	var credsSecret corev1.Secret
-	if err := apiClient.Get(ctx, secretName, &credsSecret); err != nil {
-		log.Error(err, "unable to fetch credentials secret")
-		return nil, err
-	}
-
-	dsn := string(credsSecret.Data["dsn"])
-
-	var migrationEngine dbadmin.MigrationEngine
-	switch dbSpec.MigrationEngine {
-	case "alembic":
-		migrationEngine = alembic.CreateMigrationEngine()
-	}
-
-	switch dbSpec.Connection.Engine {
-	case "mysql":
-		return mysqladmin.CreateMySQLAdmin(dsn, migrationEngine)
-	}
-	return nil, fmt.Errorf("Unknown database engine: %s", dbSpec.Connection.Engine)
 }
 
 func migrationName(dbName, migrationName string) string {
