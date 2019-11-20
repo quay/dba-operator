@@ -48,6 +48,11 @@ import (
 // specific database credentials when created in a managed database
 const DBUsernamePrefix = "dba_"
 
+// BlockedByMigrationLabelKey is the key that will be used to add a label to a
+// ManagedDatabase object indicating that it is blocked in some way by the named
+// migration.
+const BlockedByMigrationLabelKey = "blocked-by-migration"
+
 var requeueAfterDelay = ctrl.Result{Requeue: true, RequeueAfter: 60 * time.Second}
 
 // ManagedDatabaseController reconciles ManagedDatabase and DatabaseMigration objects
@@ -124,7 +129,13 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		log.Error(err, "unable to fetch ManagedDatabase")
 		return handleError(ctx, c.Client, &db, log, err)
 	}
+
+	// Normalize the object before reconciliation
 	db.Status.Errors = nil
+	if db.Labels == nil {
+		db.Labels = make(map[string]string)
+	}
+	delete(db.Labels, BlockedByMigrationLabelKey)
 
 	c.databaseLinks[db.SelfLink] = nil
 	c.metrics.ManagedDatabases.Set(float64(len(c.databaseLinks)))
@@ -175,6 +186,10 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 	var migrationToRun *dba.DatabaseMigration
 
 	for needVersion != currentDbVersion {
+		if needVersion == "" {
+			noPathErr := fmt.Errorf("Unable to find a path from the desired version (%s) to our current version (%s)", db.Spec.DesiredSchemaVersion, currentDbVersion)
+			return handleError(ctx, c.Client, &db, log, noPathErr)
+		}
 		found, err := loadMigration(ctx, log, c.Client, db.Namespace, needVersion)
 		if err != nil {
 			return handleError(ctx, c.Client, &db, log, err)
@@ -186,7 +201,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 
 	var currentVersionMigration *dba.DatabaseMigration
 	if currentDbVersion != "" {
-		// No need for a migration, reconcile with the version we have
+		// Load the migration for where the DB currently is
 		currentVersionMigration, err = loadMigration(ctx, log, c.Client, db.Namespace, currentDbVersion)
 		if err != nil {
 			return handleError(ctx, c.Client, &db, log, err)
@@ -217,7 +232,12 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		hintsEngine := hints.NewHintsEngine(admin, oneMigration.db.Spec.HintsEngine.LargeTableRowsThreshold)
 		migrationErrors, err := hintsEngine.ProcessHints(oneMigration.nextVersion.Spec.SchemaHints)
 		if err != nil {
-			return handleError(ctx, c.Client, &db, log, err)
+			migrationName := types.NamespacedName{
+				Namespace: oneMigration.nextVersion.Namespace,
+				Name:      oneMigration.db.Name,
+			}
+			blockedError := newMigrationErrorf(migrationName, "Migration contains an error: %w", err)
+			return handleError(ctx, c.Client, &db, log, blockedError)
 		}
 
 		if len(migrationErrors) > 0 {
@@ -355,7 +375,7 @@ func loadMigration(ctx context.Context, log logr.Logger, apiClient client.Client
 	var version dba.DatabaseMigration
 	if err := apiClient.Get(ctx, path, &version); err != nil {
 		log.Error(err, "unable to fetch DatabaseMigration")
-		return nil, fmt.Errorf("Unable to fetch DatabaseMigration (%s): %w", path, err)
+		return nil, newMigrationErrorf(path, "Unable to fetch DatabaseMigration (%s): %w", path, err)
 	}
 
 	return &version, nil
@@ -480,9 +500,27 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 // DatabaseMigration CR or any object owned by it.
 func (c *ManagedDatabaseController) ReconcileDatabaseMigration(req ctrl.Request) (ctrl.Result, error) {
 	var _ = context.Background()
-	var _ = c.Log.WithValues("databasemigration", req.NamespacedName)
+	var log = c.Log.WithValues("databasemigration", req.NamespacedName)
+	var ctx = context.Background()
 
-	// These are pure data, so nothing to do for now
+	// Find any ManagedDatabase(s) that are blocked on us and remove the blocked
+	// label to cause them to be requeued
+	labelSelector := make(map[string]string)
+	labelSelector[BlockedByMigrationLabelKey] = migrationLabelValue(req.NamespacedName)
+
+	var managedDatabases dba.ManagedDatabaseList
+	if err := c.List(ctx, &managedDatabases, client.InNamespace(req.Namespace), client.MatchingLabels(labelSelector)); err != nil {
+		log.Error(err, "unable to list waiting ManagedDatabase(s)")
+	}
+
+	for _, db := range managedDatabases.Items {
+		delete(db.ObjectMeta.Labels, BlockedByMigrationLabelKey)
+		if err := c.Update(ctx, &db); err != nil {
+			// If we encounter an error we should requeue so we can wake it up
+			// the ManagedDatabase again on our next reconcile
+			return requeueAfterDelay, err
+		}
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -538,22 +576,38 @@ func getStandardLabels(db *dba.ManagedDatabase, migration *dba.DatabaseMigration
 }
 
 func handleError(ctx context.Context, apiClient client.Client, db *dba.ManagedDatabase, log logr.Logger, err error) (finalResult ctrl.Result, finalError error) {
-	var maybeTemporary xerrors.EnhancedError
 
 	statusError := dba.ManagedDatabaseError{Message: err.Error(), Temporary: false}
 
+	var maybeTemporary xerrors.EnhancedError
+	var maybeMigrationError migrationError
+	updateWholeObject := false
 	if errors.As(err, &maybeTemporary) && maybeTemporary.Temporary() {
 		finalResult = requeueAfterDelay
 		finalError = err
 		statusError.Temporary = true
+	} else if errors.As(err, &maybeMigrationError) {
+		blockingMigrationName := maybeMigrationError.migrationName()
+		db.ObjectMeta.Labels[BlockedByMigrationLabelKey] = migrationLabelValue(blockingMigrationName)
+		updateWholeObject = true
 	}
 
 	db.Status.Errors = append(db.Status.Errors, statusError)
 
+	if updateWholeObject {
+		if err := apiClient.Update(ctx, db); err != nil {
+			log.Error(err, "Unable to update ManagedDatabase")
+			return ctrl.Result{}, err
+		}
+	}
 	if err := apiClient.Status().Update(ctx, db); err != nil {
 		log.Error(err, "Unable to update ManagedDatabase status block")
 		return ctrl.Result{}, err
 	}
 
 	return finalResult, finalError
+}
+
+func migrationLabelValue(migrationName types.NamespacedName) string {
+	return fmt.Sprintf("%s.%s", migrationName.Namespace, migrationName.Name)
 }
