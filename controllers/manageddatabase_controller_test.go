@@ -274,6 +274,13 @@ var _ = Describe("ManagedDatabaseController", func() {
 				})
 
 				AssertReconciliationError(1)
+
+				It("should append a label to the database naming the missing migration", func() {
+					expectedLabelValue := fmt.Sprintf("%s.unknown", namespace)
+					var afterReconcile dba.ManagedDatabase
+					Expect(k8sClient.Get(context.Background(), dbObjectName, &afterReconcile)).NotTo(HaveOccurred())
+					Expect(afterReconcile.Labels).To(HaveKeyWithValue(BlockedByMigrationLabelKey, expectedLabelValue))
+				})
 			})
 		})
 
