@@ -28,6 +28,8 @@ import (
 
 	// +kubebuilder:scaffold:imports
 
+	_ "github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
+
 	dbaoperatorv1alpha1 "github.com/app-sre/dba-operator/api/v1alpha1"
 	"github.com/app-sre/dba-operator/controllers"
 )

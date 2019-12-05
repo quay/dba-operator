@@ -3,7 +3,6 @@ package mysqladmin
 import (
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"math/rand"
 
@@ -14,6 +13,12 @@ import (
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/xerrors"
 )
+
+const driverName = "mysql"
+
+func init() {
+	dbadmin.Register(driverName, CreateMySQLAdmin)
+}
 
 // MySQLDbAdmin is a type which implements DbAdmin for MySQL databases
 type MySQLDbAdmin struct {
@@ -36,25 +41,9 @@ func noquote(cantBeQuoted string) sqlValue {
 }
 
 // CreateMySQLAdmin will instantiate a MySQLDbAdmin object with the specified
-// connection information and MigrationEngine.
-func CreateMySQLAdmin(dsn string, engine dbadmin.MigrationEngine) (dbadmin.DbAdmin, error) {
-	parsed, err := mysql.ParseDSN(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse connection dsn: %w", err)
-	}
-	if parsed.User == "" || parsed.Passwd == "" {
-		return nil, errors.New("Must provide username and password in the connection DSN")
-	}
-	if parsed.DBName == "" {
-		return nil, errors.New("Must provide specific database name in the connection DSN")
-	}
-
-	db, err := sqlx.Connect("mysql", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to open connection to db: %w", wrap(err))
-	}
-
-	return &MySQLDbAdmin{db, parsed.DBName, engine}, nil
+// connection and MigrationEngine.
+func CreateMySQLAdmin(db *sql.DB, dbName string, engine dbadmin.MigrationEngine) (dbadmin.DbAdmin, error) {
+	return &MySQLDbAdmin{sqlx.NewDb(db, driverName), dbName, engine}, nil
 }
 
 func randIdentifier(randomBytes int) string {

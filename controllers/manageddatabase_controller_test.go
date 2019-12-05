@@ -68,7 +68,6 @@ func newManagedDatabase(namespace, desiredSchemaVersion string) dba.ManagedDatab
 		Spec: dba.ManagedDatabaseSpec{
 			DesiredSchemaVersion: desiredSchemaVersion,
 			Connection: dba.DatabaseConnectionInfo{
-				Engine:    "mysql",
 				DSNSecret: "connection-dsn",
 			},
 			MigrationEngine: "alembic",
@@ -111,7 +110,7 @@ var _ = Describe("ManagedDatabaseController", func() {
 		controller = NewManagedDatabaseController(k8sClient, scheme.Scheme, testLogger, metrics.Registry)
 
 		mockDB = &dbadminfakes.FakeDbAdmin{}
-		controller.initializeAdminConnection = func(_, _, _ string) (dbadmin.DbAdmin, error) {
+		controller.initializeAdminConnection = func(_, _ string) (dbadmin.DbAdmin, error) {
 			return mockDB, nil
 		}
 	})
@@ -215,7 +214,6 @@ var _ = Describe("ManagedDatabaseController", func() {
 					}
 
 					Expect(envMap).Should(HaveKey("DBA_OP_CONNECTION_STRING"))
-					Expect(envMap).Should(HaveKey("DBA_OP_CONNECTION_ENGINE"))
 					Expect(envMap).Should(HaveKey("DBA_OP_JOB_ID"))
 					Expect(envMap).Should(HaveKey("DBA_OP_PROMETHEUS_PUSH_GATEWAY_ADDR"))
 					Expect(envMap).Should(HaveKey("DBA_OP_LABEL_DATABASE"))
@@ -370,7 +368,7 @@ var _ = Describe("ManagedDatabaseController", func() {
 
 		Context("but can't connect to the database", func() {
 			BeforeEach(func() {
-				controller.initializeAdminConnection = func(_, _, _ string) (dbadmin.DbAdmin, error) {
+				controller.initializeAdminConnection = func(_, _ string) (dbadmin.DbAdmin, error) {
 					return nil, fmt.Errorf("Can't connect to the database")
 				}
 			})
