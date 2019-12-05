@@ -81,9 +81,6 @@ type PrometheusMetricExporter struct {
 // DatabaseConnectionInfo defines engine specific connection parameters to establish
 // a connection to the database.
 type DatabaseConnectionInfo struct {
-	// +kubebuilder:validation:Enum=mysql
-	Engine string `json:"engine,omitempty"`
-
 	// +kubebuilder:validation:MinLength=1
 	DSNSecret string `json:"dsnSecret,omitempty"`
 }
@@ -110,10 +107,12 @@ type ManagedDatabaseStatus struct {
 	Errors         []ManagedDatabaseError `json:"errors,omitempty"`
 }
 
+// ManagedDatabase is the Schema for the manageddatabases API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
-// ManagedDatabase is the Schema for the manageddatabases API
+// +kubebuilder:printcolumn:name="Current Version",type=string,JSONPath=`.status.currentVersion`
+// +kubebuilder:printcolumn:name="Desired Version",type=string,JSONPath=`.spec.desiredSchemaVersion`
+// +kubebuilder:printcolumn:name="Error",type=string,JSONPath=`.status.errors[0].message`
 type ManagedDatabase struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

@@ -61,6 +61,7 @@ type DatabaseMigrationStatus struct {
 // +kubebuilder:object:root=true
 
 // DatabaseMigration is the Schema for the databasemigrations API
+// +kubebuilder:printcolumn:name="Previous",type=string,JSONPath=`.spec.previous`
 type DatabaseMigration struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
