@@ -13,7 +13,7 @@ endif
 all: manager
 
 lint: vet
-	golangci-lint -v run
+	golangci-lint -v run --enable golint --enable prealloc --enable gosec
 
 # Run tests
 test: generate manifests

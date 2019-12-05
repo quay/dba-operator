@@ -48,7 +48,7 @@ func CreateMySQLAdmin(db *sql.DB, dbName string, engine dbadmin.MigrationEngine)
 
 func randIdentifier(randomBytes int) string {
 	identBytes := make([]byte, randomBytes)
-	rand.Read(identBytes)
+	rand.Read(identBytes) // nolint:gosec
 
 	// Here we prepend "var" to handle an edge case where some hex (e.g. 1e2)
 	// gets interpreted as scientific notation by MySQL
@@ -92,6 +92,8 @@ func (mdba *MySQLDbAdmin) indirectSubstitute(format string, args ...sqlValue) xe
 	}
 
 	stmtName := randIdentifier(16)
+
+	// nolint:gosec
 	_, err = tx.Exec(fmt.Sprintf("PREPARE %s FROM @%s", stmtName, stmtStringName))
 	if err != nil {
 		return wrap(err)

@@ -77,7 +77,7 @@ func newManagedDatabase(namespace, desiredSchemaVersion string) dba.ManagedDatab
 
 func randIdentifier(randomBytes int) string {
 	identBytes := make([]byte, randomBytes)
-	rand.Read(identBytes)
+	rand.Read(identBytes) // nolint:gosec
 
 	// Here we prepend "var" to handle an edge case where some hex (e.g. 1e2)
 	// gets interpreted as scientific notation by MySQL
