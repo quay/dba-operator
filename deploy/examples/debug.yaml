@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: db-init
+  name: mysql-db-init
 data:
   db-init.sql: |
     GRANT ALL PRIVILEGES ON *.* TO 'user'@'%' WITH GRANT OPTION;
@@ -42,7 +42,7 @@ spec:
       volumes:
         - name: initdb-vol
           configMap:
-            name: db-init
+            name: mysql-db-init
 ---
 apiVersion: v1
 kind: Service

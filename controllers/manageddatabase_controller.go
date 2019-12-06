@@ -39,7 +39,6 @@ import (
 	dba "github.com/app-sre/dba-operator/api/v1alpha1"
 	"github.com/app-sre/dba-operator/pkg/dbadmin"
 	"github.com/app-sre/dba-operator/pkg/dbadmin/alembic"
-	"github.com/app-sre/dba-operator/pkg/dbadmin/mysqladmin"
 	"github.com/app-sre/dba-operator/pkg/hints"
 	"github.com/app-sre/dba-operator/pkg/xerrors"
 )
@@ -64,7 +63,7 @@ type ManagedDatabaseController struct {
 	promRegistry              *prometheus.Registry
 	databaseLinks             map[string]interface{}
 	databaseMetricsCollectors map[string]CollectorCloser
-	initializeAdminConnection func(string, string, string) (dbadmin.DbAdmin, error)
+	initializeAdminConnection func(string, string) (dbadmin.DbAdmin, error)
 }
 
 // NewManagedDatabaseController will instantiate a ManagedDatabaseController
@@ -72,18 +71,14 @@ type ManagedDatabaseController struct {
 func NewManagedDatabaseController(c client.Client, scheme *runtime.Scheme, l logr.Logger, promRegistry *prometheus.Registry) *ManagedDatabaseController {
 	metrics := generateManagedDatabaseControllerMetrics()
 
-	dbInitializer := func(dsn, migrationEngineType, databaseType string) (dbadmin.DbAdmin, error) {
+	dbInitializer := func(dsn, migrationEngineType string) (dbadmin.DbAdmin, error) {
 		var migrationEngine dbadmin.MigrationEngine
 		switch migrationEngineType {
 		case "alembic":
 			migrationEngine = alembic.CreateMigrationEngine()
 		}
 
-		switch databaseType {
-		case "mysql":
-			return mysqladmin.CreateMySQLAdmin(dsn, migrationEngine)
-		}
-		return nil, fmt.Errorf("Unknown database engine: %s", databaseType)
+		return dbadmin.Open(dsn, migrationEngine)
 	}
 
 	return &ManagedDatabaseController{
@@ -150,7 +145,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 
 	dsn := string(credsSecret.Data["dsn"])
 
-	metricsAdmin, err := c.initializeAdminConnection(dsn, db.Spec.MigrationEngine, db.Spec.Connection.Engine)
+	metricsAdmin, err := c.initializeAdminConnection(dsn, db.Spec.MigrationEngine)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 
@@ -161,7 +156,7 @@ func (c *ManagedDatabaseController) ReconcileManagedDatabase(req ctrl.Request) (
 		return handleError(ctx, c.Client, &db, log, err)
 	}
 
-	admin, err := c.initializeAdminConnection(dsn, db.Spec.MigrationEngine, db.Spec.Connection.Engine)
+	admin, err := c.initializeAdminConnection(dsn, db.Spec.MigrationEngine)
 	if err != nil {
 		log.Error(err, "unable to create database connection")
 

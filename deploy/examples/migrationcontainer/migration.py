@@ -75,7 +75,7 @@ def run(db_connection_string, push_gateway_addr, job_id, labels, write_version,
 def _parse_mysql_dsn(db_connection_string):
     # DO NOT use this regex as authoritative for a MySQL DSN
     matcher = re.match(
-        r'([^:]+):([^@]+)@tcp\(([^:]+):([0-9]+)\)\/([a-zA-Z0-9]+)',
+        r'mysql:\/\/([^:]+):([^@]+)@([^:]+):([0-9]+)\/([a-zA-Z0-9]+)',
         db_connection_string,
     )
     assert matcher is not None

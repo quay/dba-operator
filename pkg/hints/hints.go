@@ -67,7 +67,7 @@ func (he *hintsEngine) ProcessHints(hints []dba.DatabaseMigrationSchemaHint) ([]
 	}
 
 	// Load the table sizes for all of the referenced tables
-	var tableNamesList []dbadmin.TableName
+	tableNamesList := make([]dbadmin.TableName, len(tablesReferenced))
 	for oneTableName := range tablesReferenced {
 		tableNamesList = append(tableNamesList, oneTableName)
 	}

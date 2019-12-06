@@ -1,15 +1,197 @@
+
+---
 apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
+  creationTimestamp: null
   name: manageddatabases.dbaoperator.app-sre.redhat.com
 spec:
+  additionalPrinterColumns:
+  - JSONPath: .status.currentVersion
+    name: Current Version
+    type: string
+  - JSONPath: .spec.desiredSchemaVersion
+    name: Desired Version
+    type: string
+  - JSONPath: .status.errors[0].message
+    name: Error
+    type: string
   group: dbaoperator.app-sre.redhat.com
   names:
     kind: ManagedDatabase
     listKind: ManagedDatabaseList
     plural: manageddatabases
     singular: manageddatabase
-  scope: Namespaced
-  version: v1alpha1
+  scope: ""
   subresources:
     status: {}
+  validation:
+    openAPIV3Schema:
+      description: ManagedDatabase is the Schema for the manageddatabases API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: ManagedDatabaseSpec defines the desired state of ManagedDatabase
+          properties:
+            connection:
+              description: DatabaseConnectionInfo defines engine specific connection
+                parameters to establish a connection to the database.
+              properties:
+                dsnSecret:
+                  minLength: 1
+                  type: string
+              type: object
+            desiredSchemaVersion:
+              type: string
+            exportDataMetrics:
+              description: DataMetrics declares what information the DBA operator
+                should expose from the database under management
+              properties:
+                sqlQuery:
+                  items:
+                    description: SQLQueryMetric describes a SQL query to run against
+                      the database and how to expose it as a metric. It must select
+                      exactly one value in one row, and the value must represent either
+                      a counter (uint) or gauge (float).
+                    properties:
+                      prometheusMetric:
+                        description: PrometheusMetricExporter describes how a given
+                          value should be exported.
+                        properties:
+                          extraLabels:
+                            additionalProperties:
+                              type: string
+                            type: object
+                          helpString:
+                            type: string
+                          name:
+                            type: string
+                          valueType:
+                            enum:
+                            - counter
+                            - gauge
+                            type: string
+                        type: object
+                      query:
+                        pattern: SELECT [^;]+;
+                        type: string
+                    type: object
+                  type: array
+                tableEstimatedSize:
+                  items:
+                    description: TableReference refers to a DB table by name
+                    properties:
+                      tableName:
+                        type: string
+                    type: object
+                  type: array
+                tableNextID:
+                  items:
+                    description: TableReference refers to a DB table by name
+                    properties:
+                      tableName:
+                        type: string
+                    type: object
+                  type: array
+              type: object
+            hintsEngine:
+              description: HintsEngineConfig defines the values that can be passed
+                to the hints engine to help it understand context under which this
+                manageddatabase runs that can't be queried from the database directly.
+              properties:
+                enabled:
+                  type: boolean
+                largetableRowsThreshold:
+                  format: int64
+                  minimum: 1
+                  type: integer
+              type: object
+            migrationContainerConfig:
+              description: MigrationContainerConfig defines extra configuration that
+                a migration container may require before it is able to run. Specify
+                a secret name and how to bind that into the container.
+              properties:
+                secret:
+                  type: string
+                volumeMount:
+                  description: VolumeMount describes a mounting of a Volume within
+                    a container.
+                  properties:
+                    mountPath:
+                      description: Path within the container at which the volume should
+                        be mounted.  Must not contain ':'.
+                      type: string
+                    mountPropagation:
+                      description: mountPropagation determines how mounts are propagated
+                        from the host to container and the other way around. When
+                        not set, MountPropagationNone is used. This field is beta
+                        in 1.10.
+                      type: string
+                    name:
+                      description: This must match the Name of a Volume.
+                      type: string
+                    readOnly:
+                      description: Mounted read-only if true, read-write otherwise
+                        (false or unspecified). Defaults to false.
+                      type: boolean
+                    subPath:
+                      description: Path within the volume from which the container's
+                        volume should be mounted. Defaults to "" (volume's root).
+                      type: string
+                    subPathExpr:
+                      description: Expanded path within the volume from which the
+                        container's volume should be mounted. Behaves similarly to
+                        SubPath but environment variable references $(VAR_NAME) are
+                        expanded using the container's environment. Defaults to ""
+                        (volume's root). SubPathExpr and SubPath are mutually exclusive.
+                        This field is alpha in 1.14.
+                      type: string
+                  required:
+                  - mountPath
+                  - name
+                  type: object
+              type: object
+            migrationEngine:
+              type: string
+          type: object
+        status:
+          description: ManagedDatabaseStatus defines the observed state of ManagedDatabase
+          properties:
+            currentVersion:
+              type: string
+            errors:
+              items:
+                description: ManagedDatabaseError contains information about an error
+                  that occurred when reconciling this ManagedDatabase, and whether
+                  the error is considered temporary/transient.
+                properties:
+                  message:
+                    type: string
+                  temporary:
+                    type: boolean
+                type: object
+              type: array
+          type: object
+      type: object
+  version: v1alpha1
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []
