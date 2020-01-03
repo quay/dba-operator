@@ -337,6 +337,13 @@ func (c *ManagedDatabaseController) reconcileMigrationJob(oneMigration migration
 		delete(neededJobsRunning, job.Labels["migration-uid"])
 	}
 
+	if oneMigration.db.Spec.ReadOnly {
+		if len(neededJobsRunning) > 0 {
+			return fmt.Errorf("Need to create %d migration(s) against read only database", len(neededJobsRunning))
+		}
+		return nil
+	}
+
 	for _, migration := range neededJobsRunning {
 		// Start the migration
 		oneMigration.log.Info("Running migration", "currentVersion", migration.Spec.Previous)
@@ -436,8 +443,21 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 		existingDbUsernamesSet.Add(username)
 	}
 
-	// Remove any users that shouldn't be there
+	// Compute the mutations that need to be done to the database
 	dbUsersToRemove := existingDbUsernamesSet.Difference(dbUsernames)
+	dbUsersToAdd := dbUsernames.Difference(existingDbUsernamesSet)
+	secretsToAdd := secretNames.Difference(existingSecretSet)
+
+	// If we are read-only but have work to do, we should raise an error
+	if oneMigration.db.Spec.ReadOnly {
+		numMutationsRequired := dbUsersToAdd.Cardinality() + dbUsersToRemove.Cardinality() + secretsToAdd.Cardinality()
+		if numMutationsRequired > 0 {
+			return fmt.Errorf("DB user reconciliation requires %d mutations on a readonly database", numMutationsRequired)
+		}
+		return nil
+	}
+
+	// Remove any users that shouldn't be there
 	for dbUserToRemoveItem := range dbUsersToRemove.Iterator().C {
 		dbUserToRemove := dbUserToRemoveItem.(string)
 		oneMigration.log.Info("Deprovisioning user account", "username", dbUserToRemove)
@@ -448,8 +468,6 @@ func (c *ManagedDatabaseController) reconcileCredentialsForVersion(oneMigration 
 	}
 
 	// Create any missing credentials in the database
-	dbUsersToAdd := dbUsernames.Difference(existingDbUsernamesSet)
-	secretsToAdd := secretNames.Difference(existingSecretSet)
 	for dbUserToAddItem := range dbUsersToAdd.Iterator().C {
 		dbUserToAdd := dbUserToAddItem.(string)
 		newPassword, err := randPassword()

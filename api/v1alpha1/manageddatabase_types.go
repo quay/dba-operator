@@ -31,6 +31,7 @@ type ManagedDatabaseSpec struct {
 	MigrationContainerConfig *MigrationContainerConfig `json:"migrationContainerConfig,omitempty"`
 	ExportDataMetrics        *DataMetrics              `json:"exportDataMetrics,omitempty"`
 	HintsEngine              *HintsEngineConfig        `json:"hintsEngine,omitempty"`
+	ReadOnly                 bool                      `json:"readonly,omitempty"`
 }
 
 // HintsEngineConfig defines the values that can be passed to the hints engine
