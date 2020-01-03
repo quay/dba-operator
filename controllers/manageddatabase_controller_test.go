@@ -220,6 +220,14 @@ var _ = Describe("ManagedDatabaseController", func() {
 					Expect(envMap).Should(HaveKey("DBA_OP_LABEL_MIGRATION"))
 				})
 			})
+
+			Context("which is readonly", func() {
+				BeforeEach(func() {
+					db.Spec.ReadOnly = true
+				})
+
+				AssertReconciliationError(1)
+			})
 		})
 
 		Context("on a database that is already at v1", func() {
@@ -278,6 +286,49 @@ var _ = Describe("ManagedDatabaseController", func() {
 					var afterReconcile dba.ManagedDatabase
 					Expect(k8sClient.Get(context.Background(), dbObjectName, &afterReconcile)).NotTo(HaveOccurred())
 					Expect(afterReconcile.Labels).To(HaveKeyWithValue(BlockedByMigrationLabelKey, expectedLabelValue))
+				})
+			})
+
+			Context("which is readonly", func() {
+				BeforeEach(func() {
+					db.Spec.ReadOnly = true
+				})
+
+				AssertReconciliationError(1)
+			})
+
+			Context("which has already stabilized", func() {
+				BeforeEach(func() {
+					mockDB.ListUsernamesReturns([]string{"dba_v1"}, nil)
+					v1Secret := corev1.Secret{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      fmt.Sprintf("%s-%s", db.Name, v1.Name),
+							Namespace: namespace,
+						},
+						StringData: map[string]string{},
+					}
+
+					secretsToSave = append(secretsToSave, v1Secret)
+				})
+
+				AssertReconciliationSuccess()
+
+				It("should make no mutations to the users in the database", func() {
+					Expect(mockDB.WriteCredentialsCallCount()).To(Equal(0))
+					Expect(mockDB.VerifyUnusedAndDeleteCredentialsCallCount()).To(Equal(0))
+				})
+
+				Context("and which is readonly", func() {
+					BeforeEach(func() {
+						db.Spec.ReadOnly = true
+					})
+
+					AssertReconciliationSuccess()
+
+					It("should make no mutations to the users in the database", func() {
+						Expect(mockDB.WriteCredentialsCallCount()).To(Equal(0))
+						Expect(mockDB.VerifyUnusedAndDeleteCredentialsCallCount()).To(Equal(0))
+					})
 				})
 			})
 		})
@@ -345,6 +396,14 @@ var _ = Describe("ManagedDatabaseController", func() {
 				})
 
 				AssertJobProvisioned("v3-container-name", 1)
+
+				Context("which is readonly", func() {
+					BeforeEach(func() {
+						db.Spec.ReadOnly = true
+					})
+
+					AssertReconciliationError(1)
+				})
 			})
 
 			Context("but that erroneously wants to roll back to v1", func() {
